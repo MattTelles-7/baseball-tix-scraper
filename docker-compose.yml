@@ -1,0 +1,17 @@
+services:
+  mlb-ticket-tracker:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "mlb_ticket_tracker.cli", "healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
