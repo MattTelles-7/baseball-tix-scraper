@@ -17,3 +17,21 @@
 - Decision: persist only lightweight JSON state in v1.
 - Rationale: simpler deployment and sufficient for dedupe, event caching, and cleanup.
 - Consequence: no built-in historical database beyond Home Assistant history.
+
+## 2026-03-27: Discovery Price Signal Is Ticketmaster `priceRanges.min`
+
+- Decision: publish Ticketmaster Discovery `priceRanges.min` as the working cheapest-price signal.
+- Rationale: it is the best honest public signal available without privileged access.
+- Consequence: docs must state that it is a best-effort price estimate, not guaranteed live listing parity.
+
+## 2026-03-27: SeatGeek And Vivid Stay Scaffolded
+
+- Decision: keep SeatGeek and Vivid disabled by default and explicitly labeled as partial or unsupported.
+- Rationale: the branch should not overstate source support or depend on brittle undocumented behavior.
+- Consequence: future work can add those providers without pretending they are ready today.
+
+## 2026-03-27: Home Assistant Entity Cleanup After Grace Window
+
+- Decision: remove stale game entities after a post-game grace period.
+- Rationale: keeps Home Assistant tidy while preserving useful history in HA itself.
+- Consequence: entity state history remains in Home Assistant, but old MQTT discovery entities do not accumulate.

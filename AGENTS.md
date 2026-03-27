@@ -17,6 +17,8 @@ Read this file first, then read the docs relevant to the task before making chan
 7. `docs/HOME_ASSISTANT.md`
 8. `docs/TESTING.md`
 
+Current branch state: the service already has the core schedule, state, Ticketmaster, and MQTT publishing code. Treat the docs as release docs for a working single-user service, not a blank bootstrap.
+
 ## Commands
 
 - Create venv: `python3 -m venv .venv`
@@ -25,6 +27,9 @@ Read this file first, then read the docs relevant to the task before making chan
 - Lint: `.venv/bin/ruff check .`
 - Format check: `.venv/bin/ruff format --check .`
 - Type check: `.venv/bin/mypy src tests`
+- Deploy locally: `./scripts/deploy.sh`
+- Update/restart locally: `./scripts/update.sh`
+- Tail logs: `./scripts/logs.sh`
 
 ## Conventions
 
@@ -34,6 +39,7 @@ Read this file first, then read the docs relevant to the task before making chan
 - Keep Home Assistant entity IDs and MQTT topics deterministic.
 - Persist only lightweight JSON state in `DATA_DIR`.
 - Update docs with code changes.
+- Keep README simple and operational for a single Debian 13 user.
 
 ## Do-Not Rules
 
@@ -48,6 +54,7 @@ Read this file first, then read the docs relevant to the task before making chan
 - Docker Compose deployment and `.env` configuration are documented clearly.
 - Tests, lint, and type checks pass locally where tooling is available.
 - README and docs reflect the real implementation and limitations.
+- SeatGeek and Vivid are described honestly as partial or unsupported-by-default scaffolds.
 
 ## Review Checklist
 

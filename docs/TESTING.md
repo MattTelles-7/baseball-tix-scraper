@@ -12,10 +12,16 @@
 - Format check: `.venv/bin/ruff format --check .`
 - Types: `.venv/bin/mypy src tests`
 
-## Expected Coverage
+## What The Tests Cover
 
-- Schedule and home-game filtering
-- Provider normalization
-- MQTT topic and payload generation
-- JSON state/cache logic
-- Mocked end-to-end smoke path
+- Team resolution and MLB schedule normalization
+- Home-game filtering and grace-window retention
+- JSON state persistence and dedupe bookkeeping
+- MQTT topic, unique ID, and discovery payload generation
+- Ticketmaster matching and `priceRanges.min` normalization
+- A mocked service-path smoke test
+
+## Notes
+
+- The test suite is fully mocked and does not require live Ticketmaster, MQTT, or Home Assistant access.
+- If you add any live checks later, gate them behind explicit flags or env vars and keep them out of the default CI path.

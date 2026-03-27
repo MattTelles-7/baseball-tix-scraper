@@ -12,10 +12,12 @@ One self-hosting user running the service for personal monitoring on a Debian 13
 
 - MLB team schedule lookup
 - Home games only by default
-- Ticketmaster support first
+- Ticketmaster Discovery API support first
 - MQTT discovery publishing for Home Assistant
 - Lightweight local persistence
 - Docker Compose deployment
+- Simple `.env` configuration
+- Health and service status sensors
 
 ## Out of Scope
 
@@ -24,3 +26,4 @@ One self-hosting user running the service for personal monitoring on a Debian 13
 - Notification workflows outside Home Assistant
 - MLB Ballpark support
 - Anti-bot or evasion features
+- Browser automation or stealth scraping
