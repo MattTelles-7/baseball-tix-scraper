@@ -23,11 +23,13 @@ class MlbScheduleClient:
         lookahead_days: int,
         home_games_only: bool,
         timezone: str,
+        grace_minutes: int = 0,
         now: datetime | None = None,
     ) -> list[ScheduledGame]:
         """Fetch and normalize upcoming MLB games for a team."""
         tzinfo = ZoneInfo(timezone)
         current_time = now.astimezone(tzinfo) if now else datetime.now(tz=tzinfo)
+        earliest_allowed = current_time - timedelta(minutes=grace_minutes)
         end_time = current_time + timedelta(days=lookahead_days)
 
         response = httpx.get(
@@ -35,7 +37,7 @@ class MlbScheduleClient:
             params={
                 "sportId": "1",
                 "teamId": str(team.id),
-                "startDate": current_time.date().isoformat(),
+                "startDate": earliest_allowed.date().isoformat(),
                 "endDate": end_time.date().isoformat(),
                 "gameType": "R",
                 "hydrate": "venue",
@@ -49,7 +51,7 @@ class MlbScheduleClient:
         for day in payload.get("dates", []):
             for game in day.get("games", []):
                 normalized_game = normalize_scheduled_game(game=game, timezone=timezone)
-                if normalized_game.game_datetime < current_time:
+                if normalized_game.game_datetime + timedelta(minutes=grace_minutes) < current_time:
                     continue
                 if home_games_only and normalized_game.home_team_id != team.id:
                     continue

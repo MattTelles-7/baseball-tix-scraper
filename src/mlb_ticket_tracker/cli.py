@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from mlb_ticket_tracker.config import load_settings
 from mlb_ticket_tracker.logging import configure_logging
-from mlb_ticket_tracker.service import build_service_context, initialize_runtime_state
+from mlb_ticket_tracker.service import TrackerService, build_service_context
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,13 +30,7 @@ def main() -> int:
     context = build_service_context(settings)
 
     if args.command == "run":
-        state = context.state_store.load()
-        initialize_runtime_state(
-            state_store=context.state_store,
-            state=state,
-            poll_interval_minutes=settings.poll_interval_minutes,
-            timezone=settings.timezone,
-        )
+        TrackerService(context).run_forever()
         return 0
 
     if args.command == "healthcheck":

@@ -86,7 +86,46 @@ def test_fetch_upcoming_games_filters_home_games(httpx_mock: HTTPXMock) -> None:
         lookahead_days=30,
         home_games_only=True,
         timezone="America/New_York",
+        grace_minutes=0,
         now=datetime(2026, 3, 27, tzinfo=UTC),
+    )
+
+    assert [game.game_pk for game in games] == [824540]
+
+
+def test_fetch_upcoming_games_keeps_recent_game_in_grace_window(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        json={
+            "dates": [
+                {
+                    "games": [
+                        {
+                            "gamePk": 824540,
+                            "gameType": "R",
+                            "gameDate": "2026-03-28T20:10:00Z",
+                            "officialDate": "2026-03-28",
+                            "status": {"detailedState": "In Progress"},
+                            "teams": {
+                                "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+                                "home": {"team": {"id": 113, "name": "Cincinnati Reds"}},
+                            },
+                            "venue": {"name": "Great American Ball Park"},
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    client = MlbScheduleClient(timeout_seconds=5)
+    team = resolve_team(113, None, None)
+
+    games = client.fetch_upcoming_games(
+        team=team,
+        lookahead_days=30,
+        home_games_only=True,
+        timezone="America/New_York",
+        grace_minutes=240,
+        now=datetime(2026, 3, 28, 22, 0, tzinfo=UTC),
     )
 
     assert [game.game_pk for game in games] == [824540]
