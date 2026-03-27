@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DATA_DIR: /data
     volumes:
       - ${DATA_DIR:-./data}:/data
     healthcheck:

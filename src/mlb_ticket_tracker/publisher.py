@@ -136,7 +136,10 @@ class MqttPublisher:
         if self._dry_run:
             self._client = None
         else:
-            client = mqtt.Client(client_id=settings.mqtt_client_id)
+            client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,  # type: ignore[attr-defined]
+                client_id=settings.mqtt_client_id,
+            )
             if settings.mqtt_username:
                 client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
             client.enable_logger()
