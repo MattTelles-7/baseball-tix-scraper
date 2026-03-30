@@ -19,18 +19,51 @@ Target platform is Docker Compose on Debian 13.
 cp .env.example .env
 ```
 
-2. Edit `.env` and set the required values.
-3. Start or rebuild the service:
+2. Edit `.env` and set the Ticketmaster, team, MQTT, timezone, poll interval, and data directory values you want.
+3. Validate the config in Docker without contacting Ticketmaster or publishing MQTT:
+
+```bash
+./scripts/validate.sh
+```
+
+Expected output:
+
+- JSON with `"ok": true`
+- resolved team details
+- `"data_dir_status": "writable"`
+- Ticketmaster enabled and configured
+
+4. Set `DRY_RUN=true` in `.env` for the first service start.
+5. Start or rebuild the service:
 
 ```bash
 ./scripts/deploy.sh
 ```
 
-4. Verify container health:
+6. Verify container health:
 
 ```bash
 docker compose ps
 ./scripts/health.sh
+```
+
+7. Confirm logs look sane:
+
+```bash
+./scripts/logs.sh
+```
+
+Expected early log events:
+
+- `service_started`
+- `poll_cycle_started`
+- `mqtt_dry_run_mode`
+- `dry_run_publish_entity`
+
+8. After the dry run looks correct, set `DRY_RUN=false` in `.env` and restart:
+
+```bash
+./scripts/update.sh
 ```
 
 ## Runtime Files
@@ -45,6 +78,7 @@ docker compose ps
 - Deploy: `./scripts/deploy.sh`
 - Follow logs: `./scripts/logs.sh`
 - Rebuild/restart: `./scripts/update.sh`
+- Validate config: `./scripts/validate.sh`
 - Healthcheck: `./scripts/health.sh`
 - Inspect container status: `docker compose ps`
 - Stop the service: `docker compose down`

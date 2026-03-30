@@ -27,8 +27,10 @@ Current branch state: the service already has the core schedule, state, Ticketma
 - Lint: `.venv/bin/ruff check .`
 - Format check: `.venv/bin/ruff format --check .`
 - Type check: `.venv/bin/mypy src tests`
+- Validate config locally: `set -a && source .env && set +a && PYTHONPATH=src .venv/bin/python -m mlb_ticket_tracker.cli validate-config --json`
 - Deploy locally: `./scripts/deploy.sh`
 - Update/restart locally: `./scripts/update.sh`
+- Validate config in Docker: `./scripts/validate.sh`
 - Tail logs: `./scripts/logs.sh`
 
 ## Conventions

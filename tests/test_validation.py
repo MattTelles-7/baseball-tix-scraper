@@ -54,8 +54,7 @@ def test_validate_settings_warns_for_scaffold_providers(
 
     assert report.ok is True
     assert (
-        "SeatGeek is scaffold only in this release. Keep ENABLE_SEATGEEK=false."
-        in report.warnings
+        "SeatGeek is scaffold only in this release. Keep ENABLE_SEATGEEK=false." in report.warnings
     )
     assert (
         "Vivid is scaffold only in this release. Keep ENABLE_VIVID=false for first deployment."
