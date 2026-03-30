@@ -101,8 +101,8 @@ See `docs/HOME_ASSISTANT.md` for the exact topic names and sample automations.
 ## Support Matrix
 
 - Ticketmaster: supported
-- SeatGeek: partial scaffold only
-- Vivid Seats: unsupported-by-default scaffold only
+- SeatGeek: scaffold only
+- Vivid Seats: scaffold only, unsupported by default
 
 ## Limitations
 
