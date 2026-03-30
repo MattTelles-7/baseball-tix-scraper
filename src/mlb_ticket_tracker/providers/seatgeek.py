@@ -26,12 +26,13 @@ class SeatGeekProvider(Provider):
     def capability_report(self) -> ProviderCapability:
         return ProviderCapability(
             source=self.source,
-            source_status=SourceStatus.PARTIAL,
+            source_status=SourceStatus.UNAVAILABLE,
             auth_required=True,
             implemented_fields=("stats.lowest_price",),
             limitations=(
-                "Live listing-level parity is not yet verified for this personal-service use case.",
-                "No all-in pricing field is currently modeled.",
+                "Current branch does not implement live SeatGeek event matching "
+                "or price retrieval.",
+                "Do not enable this source for real tracking in this release.",
             ),
         )
 
@@ -54,7 +55,7 @@ class SeatGeekProvider(Provider):
         del matched_event
         return PriceObservation(
             source=self.source,
-            source_status=SourceStatus.PARTIAL,
+            source_status=SourceStatus.UNAVAILABLE,
             game_id=game.game_id,
             game_datetime=game.game_datetime,
             home_team=game.home_team,

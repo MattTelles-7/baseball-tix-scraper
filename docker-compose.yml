@@ -2,7 +2,10 @@ services:
   mlb-ticket-tracker:
     build:
       context: .
+    image: mlb-home-ticket-tracker:local
+    init: true
     restart: unless-stopped
+    stop_grace_period: 30s
     env_file:
       - .env
     environment:
@@ -10,8 +13,13 @@ services:
     volumes:
       - ${DATA_DIR:-./data}:/data
     healthcheck:
-      test: ["CMD", "python", "-m", "mlb_ticket_tracker.cli", "healthcheck"]
+      test: ["CMD", "mlb-ticket-tracker", "healthcheck", "--json"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

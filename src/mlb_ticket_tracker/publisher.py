@@ -21,7 +21,7 @@ from mlb_ticket_tracker.models import (
     TrackerState,
 )
 from mlb_ticket_tracker.state import StateStore
-from mlb_ticket_tracker.utils import slugify
+from mlb_ticket_tracker.utils import redact_sensitive_text, slugify
 
 logger = structlog.get_logger(__name__)
 
@@ -46,21 +46,22 @@ def build_price_entity_descriptor(
     currency: str | None,
 ) -> EntityDescriptor:
     """Build MQTT topics and discovery config for a game price sensor."""
-    entity_slug = f"{team.slug}_{game.game_pk}_{source}_lowest_price"
-    unique_id = f"mlb_tix_{slugify(entity_slug)}"
+    entity_slug = slugify(f"{team.slug}_{game.game_pk}_{source}_lowest_price")
+    unique_id = f"mlb_tix_{entity_slug}"
     state_topic = f"{settings.mqtt_topic_prefix}/games/{game.game_pk}/{source}/state"
     attributes_topic = f"{settings.mqtt_topic_prefix}/games/{game.game_pk}/{source}/attributes"
     discovery_topic = f"{settings.mqtt_discovery_prefix}/sensor/{unique_id}/config"
     config_payload: dict[str, Any] = {
-        "name": f"{game.away_team} at {game.home_team} {source.title()} Price",
+        "name": f"{game.official_date} vs {game.away_team} {source.title()} Price",
         "unique_id": unique_id,
-        "object_id": unique_id,
+        "default_entity_id": f"sensor.{entity_slug}",
         "state_topic": state_topic,
         "json_attributes_topic": attributes_topic,
         "availability_topic": f"{settings.mqtt_topic_prefix}/availability",
         "unit_of_measurement": currency or "USD",
         "icon": "mdi:ticket-confirmation-outline",
         "state_class": "measurement",
+        "suggested_display_precision": 2,
         "device": build_device_payload(team),
     }
     return EntityDescriptor(
@@ -83,9 +84,12 @@ def build_static_sensor_descriptor(
     attributes: bool = False,
     unit_of_measurement: str | None = None,
     device_class: str | None = None,
+    entity_category: str | None = None,
+    options: list[str] | None = None,
 ) -> EntityDescriptor:
     """Build MQTT topics and discovery config for a static service sensor."""
-    unique_id = f"mlb_tix_{slugify(f'{team.slug}_{sensor_key}')}"
+    entity_slug = slugify(f"{team.slug}_{sensor_key}")
+    unique_id = f"mlb_tix_{entity_slug}"
     state_topic = f"{settings.mqtt_topic_prefix}/{state_topic_suffix}/state"
     attributes_topic = (
         f"{settings.mqtt_topic_prefix}/{state_topic_suffix}/attributes" if attributes else None
@@ -94,7 +98,7 @@ def build_static_sensor_descriptor(
     config_payload: dict[str, Any] = {
         "name": name,
         "unique_id": unique_id,
-        "object_id": unique_id,
+        "default_entity_id": f"sensor.{entity_slug}",
         "state_topic": state_topic,
         "availability_topic": f"{settings.mqtt_topic_prefix}/availability",
         "icon": icon,
@@ -106,6 +110,10 @@ def build_static_sensor_descriptor(
         config_payload["unit_of_measurement"] = unit_of_measurement
     if device_class is not None:
         config_payload["device_class"] = device_class
+    if entity_category is not None:
+        config_payload["entity_category"] = entity_category
+    if options is not None:
+        config_payload["options"] = options
     return EntityDescriptor(
         unique_id=unique_id,
         discovery_topic=discovery_topic,
@@ -132,6 +140,8 @@ class MqttPublisher:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._dry_run = settings.dry_run
+        self._connected = False
+        self._loop_started = False
         self._client: mqtt.Client | None
         if self._dry_run:
             self._client = None
@@ -143,6 +153,7 @@ class MqttPublisher:
             if settings.mqtt_username:
                 client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
             client.enable_logger()
+            client.reconnect_delay_set(min_delay=1, max_delay=30)
             client.will_set(
                 f"{settings.mqtt_topic_prefix}/availability",
                 payload="offline",
@@ -156,32 +167,66 @@ class MqttPublisher:
         if self._dry_run:
             logger.info("mqtt_dry_run_mode")
             return
+        if self._connected:
+            return
         if self._client is None:
             msg = "MQTT client is not configured"
             raise RuntimeError(msg)
-        self._client.connect(
+        logger.info(
+            "mqtt_connecting",
             host=self._settings.mqtt_host,
             port=self._settings.mqtt_port,
-            keepalive=self._settings.mqtt_keepalive,
+            client_id=self._settings.mqtt_client_id,
         )
-        self._client.loop_start()
-        self._publish_raw(
-            f"{self._settings.mqtt_topic_prefix}/availability",
-            "online",
-            retain=True,
-        )
+        try:
+            if self._loop_started:
+                self._client.reconnect()
+            else:
+                self._client.connect(
+                    host=self._settings.mqtt_host,
+                    port=self._settings.mqtt_port,
+                    keepalive=self._settings.mqtt_keepalive,
+                )
+                self._client.loop_start()
+                self._loop_started = True
+            self._connected = True
+            self._publish_raw(
+                f"{self._settings.mqtt_topic_prefix}/availability",
+                "online",
+                retain=True,
+            )
+            logger.info(
+                "mqtt_connected",
+                host=self._settings.mqtt_host,
+                port=self._settings.mqtt_port,
+            )
+        except Exception:
+            self._connected = False
+            logger.error("mqtt_connect_failed")
+            raise
 
     def close(self) -> None:
         """Disconnect from the MQTT broker."""
         if self._dry_run or self._client is None:
             return
-        self._publish_raw(
-            f"{self._settings.mqtt_topic_prefix}/availability",
-            "offline",
-            retain=True,
-        )
-        self._client.loop_stop()
-        self._client.disconnect()
+        try:
+            if self._connected:
+                self._publish_raw(
+                    f"{self._settings.mqtt_topic_prefix}/availability",
+                    "offline",
+                    retain=True,
+                )
+        except Exception:
+            logger.warning("mqtt_offline_publish_failed")
+        finally:
+            self._connected = False
+            if self._loop_started:
+                self._client.loop_stop()
+                self._loop_started = False
+            try:
+                self._client.disconnect()
+            except Exception:
+                logger.warning("mqtt_disconnect_failed")
 
     def publish_price_observation(
         self,
@@ -206,18 +251,22 @@ class MqttPublisher:
             else "unknown"
         )
         attributes_payload = {
+            "game_id": observation.game_id,
+            "game_pk": game.game_pk,
+            "game_date": game.official_date,
             "game_datetime": observation.game_datetime.isoformat(),
+            "matchup": f"{observation.away_team} at {observation.home_team}",
             "home_team": observation.home_team,
             "away_team": observation.away_team,
             "opponent": observation.away_team,
             "venue": observation.venue,
             "source": observation.source,
+            "source_display_name": observation.source.title(),
             "source_status": observation.source_status.value,
             "source_url": observation.source_url,
             "source_event_id": observation.source_event_id,
             "currency": observation.currency,
             "price_is_all_in": observation.price_is_all_in,
-            "last_checked": observation.checked_at.isoformat(),
             "notes": observation.notes,
         }
         self._publish_entity(
@@ -250,6 +299,9 @@ class MqttPublisher:
             state_topic_suffix=f"providers/{capability.source}/health",
             icon="mdi:heart-pulse",
             attributes=True,
+            device_class="enum",
+            entity_category="diagnostic",
+            options=["healthy", "backoff", "error", "unconfigured"],
         )
         if not configured:
             state_value = "unconfigured"
@@ -269,7 +321,9 @@ class MqttPublisher:
             "consecutive_failures": health.consecutive_failures,
             "last_successful_poll_at": _dt_to_str(health.last_successful_poll_at),
             "last_error_at": _dt_to_str(health.last_error_at),
-            "last_error": health.last_error,
+            "last_error": (
+                redact_sensitive_text(health.last_error) if health.last_error is not None else None
+            ),
             "backoff_until": _dt_to_str(health.backoff_until),
         }
         self._publish_entity(
@@ -299,6 +353,7 @@ class MqttPublisher:
             name="Tracked Home Games",
             state_topic_suffix="service/tracked_home_games",
             icon="mdi:baseball-diamond",
+            entity_category="diagnostic",
         )
         next_poll_descriptor = build_static_sensor_descriptor(
             settings=self._settings,
@@ -308,6 +363,7 @@ class MqttPublisher:
             state_topic_suffix="service/next_poll",
             icon="mdi:clock-outline",
             device_class="timestamp",
+            entity_category="diagnostic",
         )
         last_completed_descriptor = build_static_sensor_descriptor(
             settings=self._settings,
@@ -317,6 +373,7 @@ class MqttPublisher:
             state_topic_suffix="service/last_completed_poll",
             icon="mdi:clock-check-outline",
             device_class="timestamp",
+            entity_category="diagnostic",
         )
 
         self._publish_entity(
@@ -428,8 +485,24 @@ class MqttPublisher:
         if self._client is None:
             msg = "MQTT client is not configured"
             raise RuntimeError(msg)
-        message_info = self._client.publish(topic, payload=payload, qos=1, retain=retain)
-        message_info.wait_for_publish()
+        try:
+            message_info = self._client.publish(topic, payload=payload, qos=1, retain=retain)
+            message_info.wait_for_publish()
+        except Exception as exc:
+            self._connected = False
+            logger.error(
+                "mqtt_publish_failed",
+                topic=topic,
+                retain=retain,
+                error=redact_sensitive_text(str(exc)),
+                error_type=type(exc).__name__,
+            )
+            raise
+        if message_info.rc != mqtt.MQTT_ERR_SUCCESS:
+            self._connected = False
+            msg = f"MQTT publish failed with rc={message_info.rc}"
+            logger.error("mqtt_publish_failed_rc", topic=topic, retain=retain, rc=message_info.rc)
+            raise RuntimeError(msg)
 
 
 def _dt_to_str(value: datetime | None) -> str | None:

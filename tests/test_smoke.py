@@ -31,11 +31,9 @@ def test_tracker_service_smoke_cycle_publishes_and_deduplicates(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     provider = StaticProvider(source="ticketmaster", price=24.5)
     publisher = CapturingPublisher(settings)
-    service._publisher = publisher
-    service._providers = [provider]
+    service = TrackerService(context, publisher=publisher, providers=[provider])
 
     first_state = service._run_cycle(
         state=TrackerState(),
