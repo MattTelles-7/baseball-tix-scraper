@@ -12,6 +12,7 @@ import structlog
 
 from mlb_ticket_tracker.config import Settings
 from mlb_ticket_tracker.models import (
+    MatchedEvent,
     ProviderHealth,
     RuntimeStatus,
     ScheduledGame,
@@ -143,155 +144,19 @@ class TrackerService:
             self._publisher.close()
 
     def _run_cycle(self, *, state: TrackerState, cycle_started: datetime) -> TrackerState:
-        runtime = RuntimeStatus(
-            last_started_poll_at=cycle_started,
-            last_completed_poll_at=state.runtime.last_completed_poll_at,
-            last_heartbeat_at=cycle_started,
-            next_poll_at=cycle_started
-            + timedelta(minutes=self._context.settings.poll_interval_minutes),
-            last_error_at=state.runtime.last_error_at,
-            last_error=state.runtime.last_error,
-        )
-        state = self._context.state_store.update_runtime(state, runtime)
-        self._context.state_store.save(state)
-        logger.info(
-            "poll_cycle_started",
-            team=self._context.team.slug,
-            providers=[provider.source for provider in self._providers],
-        )
-
-        games = self._context.schedule_client.fetch_upcoming_games(
-            team=self._context.team,
-            lookahead_days=self._context.settings.lookahead_days,
-            home_games_only=self._context.settings.home_games_only,
-            timezone=self._context.settings.timezone,
-            grace_minutes=self._context.settings.post_game_grace_minutes,
-        )
+        runtime = self._start_cycle(state=state, cycle_started=cycle_started)
+        games = self._fetch_games()
         active_unique_ids: set[str] = set()
 
         for provider in self._providers:
-            capability = provider.capability_report()
-            configured = provider.healthcheck()
-            health = state.provider_health.get(provider.source, ProviderHealth())
-            if _in_backoff(health=health, now=cycle_started):
-                logger.warning(
-                    "provider_in_backoff",
-                    source=provider.source,
-                    backoff_until=(
-                        health.backoff_until.isoformat() if health.backoff_until else None
-                    ),
-                )
-                active_unique_ids.update(
-                    _expected_dynamic_entity_ids(
-                        team=self._context.team,
-                        games=games,
-                        source=provider.source,
-                        settings=self._context.settings,
-                    )
-                )
-                self._publisher.publish_provider_health(
-                    team=self._context.team,
-                    capability=capability,
-                    health=health,
-                    state_store=self._context.state_store,
+            active_unique_ids.update(
+                self._run_provider_cycle(
+                    provider=provider,
+                    games=games,
                     state=state,
-                    healthy=False,
-                    configured=True,
+                    cycle_started=cycle_started,
                 )
-                continue
-
-            if not configured:
-                logger.warning("provider_unconfigured", source=provider.source)
-                self._publisher.publish_provider_health(
-                    team=self._context.team,
-                    capability=capability,
-                    health=health,
-                    state_store=self._context.state_store,
-                    state=state,
-                    healthy=False,
-                    configured=False,
-                )
-                continue
-
-            try:
-                active_unique_ids.update(
-                    _expected_dynamic_entity_ids(
-                        team=self._context.team,
-                        games=games,
-                        source=provider.source,
-                        settings=self._context.settings,
-                    )
-                )
-                cached_matches = {
-                    key: match
-                    for key, match in state.provider_matches.items()
-                    if key.startswith(f"{provider.source}:")
-                }
-                new_matches = provider.match_events(games, cached_matches)
-                for key, matched_event in new_matches.items():
-                    self._context.state_store.remember_match(
-                        state,
-                        key=key,
-                        match=matched_event,
-                    )
-
-                for game in games:
-                    match_key = f"{provider.source}:{game.game_id}"
-                    cached_event = state.provider_matches.get(match_key)
-                    observation = provider.fetch_lowest_price(game, cached_event)
-                    entity_id = self._publisher.publish_price_observation(
-                        team=self._context.team,
-                        game=game,
-                        observation=observation,
-                        state_store=self._context.state_store,
-                        state=state,
-                    )
-                    active_unique_ids.add(entity_id)
-
-                health = ProviderHealth(
-                    consecutive_failures=0,
-                    last_successful_poll_at=cycle_started.astimezone(UTC),
-                    last_error_at=None,
-                    last_error=None,
-                    backoff_until=None,
-                )
-                self._context.state_store.remember_provider_health(
-                    state,
-                    source=provider.source,
-                    health=health,
-                )
-                self._publisher.publish_provider_health(
-                    team=self._context.team,
-                    capability=capability,
-                    health=health,
-                    state_store=self._context.state_store,
-                    state=state,
-                    healthy=True,
-                    configured=True,
-                )
-            except Exception as exc:
-                safe_error = redact_sensitive_text(str(exc))
-                health = _failure_health(previous=health, now=cycle_started, error=safe_error)
-                self._context.state_store.remember_provider_health(
-                    state,
-                    source=provider.source,
-                    health=health,
-                )
-                self._publisher.publish_provider_health(
-                    team=self._context.team,
-                    capability=capability,
-                    health=health,
-                    state_store=self._context.state_store,
-                    state=state,
-                    healthy=False,
-                    configured=True,
-                )
-                logger.error(
-                    "provider_cycle_failed",
-                    source=provider.source,
-                    error=safe_error,
-                    error_type=type(exc).__name__,
-                )
+            )
 
         self._publisher.cleanup_stale_dynamic_entities(
             active_unique_ids=active_unique_ids,
@@ -300,21 +165,13 @@ class TrackerService:
         )
 
         completed_at = datetime.now(tz=ZoneInfo(self._context.settings.timezone))
-        runtime = RuntimeStatus(
-            last_started_poll_at=runtime.last_started_poll_at,
-            last_completed_poll_at=completed_at,
-            last_heartbeat_at=completed_at,
-            next_poll_at=runtime.next_poll_at,
-            last_error_at=None,
-            last_error=None,
-        )
+        runtime = self._complete_cycle_runtime(runtime=runtime, completed_at=completed_at)
         state = self._context.state_store.update_runtime(state, runtime)
-        self._publisher.publish_service_metrics(
+        self._publish_service_metrics(
             team=self._context.team,
             tracked_games=len(games),
-            next_poll_at=runtime.next_poll_at or completed_at,
-            last_completed_poll_at=runtime.last_completed_poll_at,
-            state_store=self._context.state_store,
+            runtime=runtime,
+            completed_at=completed_at,
             state=state,
         )
         self._context.state_store.save(state)
@@ -325,6 +182,265 @@ class TrackerService:
             next_poll_at=(runtime.next_poll_at.isoformat() if runtime.next_poll_at else None),
         )
         return state
+
+    def _start_cycle(self, *, state: TrackerState, cycle_started: datetime) -> RuntimeStatus:
+        runtime = RuntimeStatus(
+            last_started_poll_at=cycle_started,
+            last_completed_poll_at=state.runtime.last_completed_poll_at,
+            last_heartbeat_at=cycle_started,
+            next_poll_at=cycle_started
+            + timedelta(minutes=self._context.settings.poll_interval_minutes),
+            last_error_at=state.runtime.last_error_at,
+            last_error=state.runtime.last_error,
+        )
+        self._context.state_store.update_runtime(state, runtime)
+        self._context.state_store.save(state)
+        logger.info(
+            "poll_cycle_started",
+            team=self._context.team.slug,
+            providers=[provider.source for provider in self._providers],
+        )
+        return runtime
+
+    def _fetch_games(self) -> list[ScheduledGame]:
+        return self._context.schedule_client.fetch_upcoming_games(
+            team=self._context.team,
+            lookahead_days=self._context.settings.lookahead_days,
+            home_games_only=self._context.settings.home_games_only,
+            timezone=self._context.settings.timezone,
+            grace_minutes=self._context.settings.post_game_grace_minutes,
+        )
+
+    def _run_provider_cycle(
+        self,
+        *,
+        provider: Provider,
+        games: list[ScheduledGame],
+        state: TrackerState,
+        cycle_started: datetime,
+    ) -> set[str]:
+        capability = provider.capability_report()
+        configured = provider.healthcheck()
+        health = state.provider_health.get(provider.source, ProviderHealth())
+
+        if _in_backoff(health=health, now=cycle_started):
+            logger.warning(
+                "provider_in_backoff",
+                source=provider.source,
+                backoff_until=health.backoff_until.isoformat() if health.backoff_until else None,
+            )
+            active_unique_ids = self._expected_dynamic_entity_ids(
+                games=games,
+                source=provider.source,
+            )
+            self._publisher.publish_provider_health(
+                team=self._context.team,
+                capability=capability,
+                health=health,
+                state_store=self._context.state_store,
+                state=state,
+                healthy=False,
+                configured=True,
+            )
+            return active_unique_ids
+
+        if not configured:
+            logger.warning("provider_unconfigured", source=provider.source)
+            self._publisher.publish_provider_health(
+                team=self._context.team,
+                capability=capability,
+                health=health,
+                state_store=self._context.state_store,
+                state=state,
+                healthy=False,
+                configured=False,
+            )
+            return set()
+
+        active_unique_ids = self._expected_dynamic_entity_ids(games=games, source=provider.source)
+        try:
+            current_matches = self._refresh_cached_matches(
+                provider=provider,
+                state=state,
+                now=cycle_started,
+            )
+            new_matches = provider.match_events(games, current_matches)
+            current_matches = self._remember_provider_matches(
+                state=state,
+                provider=provider,
+                existing_matches=current_matches,
+                new_matches=new_matches,
+            )
+            self._publish_provider_observations(
+                provider=provider,
+                games=games,
+                state=state,
+                matches=current_matches,
+            )
+
+            health = ProviderHealth(
+                consecutive_failures=0,
+                last_successful_poll_at=cycle_started.astimezone(UTC),
+                last_error_at=None,
+                last_error=None,
+                backoff_until=None,
+            )
+            self._context.state_store.remember_provider_health(
+                state,
+                source=provider.source,
+                health=health,
+            )
+            self._publisher.publish_provider_health(
+                team=self._context.team,
+                capability=capability,
+                health=health,
+                state_store=self._context.state_store,
+                state=state,
+                healthy=True,
+                configured=True,
+            )
+            return active_unique_ids
+        except Exception as exc:
+            safe_error = redact_sensitive_text(str(exc))
+            health = _failure_health(previous=health, now=cycle_started, error=safe_error)
+            self._context.state_store.remember_provider_health(
+                state,
+                source=provider.source,
+                health=health,
+            )
+            self._publisher.publish_provider_health(
+                team=self._context.team,
+                capability=capability,
+                health=health,
+                state_store=self._context.state_store,
+                state=state,
+                healthy=False,
+                configured=True,
+            )
+            logger.error(
+                "provider_cycle_failed",
+                source=provider.source,
+                error=safe_error,
+                error_type=type(exc).__name__,
+            )
+            return active_unique_ids
+
+    def _refresh_cached_matches(
+        self,
+        *,
+        provider: Provider,
+        state: TrackerState,
+        now: datetime,
+    ) -> dict[str, MatchedEvent]:
+        fresh_matches: dict[str, MatchedEvent] = {}
+        ttl_cutoff = now.astimezone(UTC) - timedelta(
+            hours=self._context.settings.match_cache_ttl_hours
+        )
+        for key, match in list(state.provider_matches.items()):
+            if not key.startswith(f"{provider.source}:"):
+                continue
+            if match.matched_at < ttl_cutoff:
+                self._context.state_store.forget_match(state, key=key)
+                logger.info(
+                    "provider_match_expired",
+                    source=provider.source,
+                    game_id=match.game_id,
+                    source_event_id=match.source_event_id,
+                    matched_at=match.matched_at.isoformat(),
+                    ttl_hours=self._context.settings.match_cache_ttl_hours,
+                )
+                continue
+            fresh_matches[key] = match
+        return fresh_matches
+
+    def _remember_provider_matches(
+        self,
+        *,
+        state: TrackerState,
+        provider: Provider,
+        existing_matches: dict[str, MatchedEvent],
+        new_matches: dict[str, MatchedEvent],
+    ) -> dict[str, MatchedEvent]:
+        merged_matches = dict(existing_matches)
+        for key, matched_event in new_matches.items():
+            self._context.state_store.remember_match(
+                state,
+                key=key,
+                match=matched_event,
+            )
+            merged_matches[key] = matched_event
+        logger.info(
+            "provider_matches_refreshed",
+            source=provider.source,
+            cached_matches=len(existing_matches),
+            new_matches=len(new_matches),
+        )
+        return merged_matches
+
+    def _publish_provider_observations(
+        self,
+        *,
+        provider: Provider,
+        games: list[ScheduledGame],
+        state: TrackerState,
+        matches: dict[str, MatchedEvent],
+    ) -> None:
+        for game in games:
+            match_key = f"{provider.source}:{game.game_id}"
+            observation = provider.fetch_lowest_price(game, matches.get(match_key))
+            self._publisher.publish_price_observation(
+                team=self._context.team,
+                game=game,
+                observation=observation,
+                state_store=self._context.state_store,
+                state=state,
+            )
+
+    def _publish_service_metrics(
+        self,
+        *,
+        team: TeamInfo,
+        tracked_games: int,
+        runtime: RuntimeStatus,
+        completed_at: datetime,
+        state: TrackerState,
+    ) -> None:
+        self._publisher.publish_service_metrics(
+            team=team,
+            tracked_games=tracked_games,
+            next_poll_at=runtime.next_poll_at or completed_at,
+            last_completed_poll_at=runtime.last_completed_poll_at,
+            state_store=self._context.state_store,
+            state=state,
+        )
+
+    def _complete_cycle_runtime(
+        self,
+        *,
+        runtime: RuntimeStatus,
+        completed_at: datetime,
+    ) -> RuntimeStatus:
+        return RuntimeStatus(
+            last_started_poll_at=runtime.last_started_poll_at,
+            last_completed_poll_at=completed_at,
+            last_heartbeat_at=completed_at,
+            next_poll_at=runtime.next_poll_at,
+            last_error_at=None,
+            last_error=None,
+        )
+
+    def _expected_dynamic_entity_ids(
+        self,
+        *,
+        games: list[ScheduledGame],
+        source: str,
+    ) -> set[str]:
+        return _expected_dynamic_entity_ids(
+            team=self._context.team,
+            games=games,
+            source=source,
+            settings=self._context.settings,
+        )
 
 
 def _build_providers(settings: Settings) -> list[Provider]:

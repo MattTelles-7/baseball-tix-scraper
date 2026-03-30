@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     home_games_only: bool = Field(default=True, alias="HOME_GAMES_ONLY")
     lookahead_days: int = Field(default=60, alias="LOOKAHEAD_DAYS")
     poll_interval_minutes: int = Field(default=15, alias="POLL_INTERVAL_MINUTES")
+    match_cache_ttl_hours: int = Field(default=24, alias="MATCH_CACHE_TTL_HOURS")
     timezone: str = Field(default="America/New_York", alias="TIMEZONE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
@@ -93,7 +94,12 @@ class Settings(BaseSettings):
         alias="VIVID_RATE_LIMIT_DELAY_SECONDS",
     )
 
-    @field_validator("lookahead_days", "poll_interval_minutes", "post_game_grace_minutes")
+    @field_validator(
+        "lookahead_days",
+        "poll_interval_minutes",
+        "post_game_grace_minutes",
+        "match_cache_ttl_hours",
+    )
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         """Ensure integer configuration values are positive."""

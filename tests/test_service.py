@@ -81,6 +81,56 @@ class FakeProvider(Provider):
         )
 
 
+class CacheAwareProvider(Provider):
+    source = "cache"
+
+    def __init__(self) -> None:
+        self.received_cached_matches: list[dict[str, MatchedEvent]] = []
+        self.fetch_match_ids: list[str | None] = []
+
+    def capability_report(self) -> ProviderCapability:
+        return ProviderCapability(
+            source=self.source,
+            source_status=SourceStatus.SUPPORTED,
+            auth_required=False,
+            implemented_fields=("price",),
+            limitations=(),
+        )
+
+    def healthcheck(self) -> bool:
+        return True
+
+    def match_events(
+        self,
+        games: list[ScheduledGame],
+        cached_matches: dict[str, MatchedEvent],
+    ) -> dict[str, MatchedEvent]:
+        del games
+        self.received_cached_matches.append(dict(cached_matches))
+        return {}
+
+    def fetch_lowest_price(
+        self,
+        game: ScheduledGame,
+        matched_event: MatchedEvent | None,
+    ) -> PriceObservation:
+        self.fetch_match_ids.append(
+            matched_event.source_event_id if matched_event is not None else None
+        )
+        return PriceObservation(
+            source=self.source,
+            source_status=SourceStatus.SUPPORTED,
+            game_id=game.game_id,
+            game_datetime=game.game_datetime,
+            home_team=game.home_team,
+            away_team=game.away_team,
+            venue=game.venue,
+            currency="USD",
+            cheapest_price=12.0,
+            checked_at=datetime(2026, 3, 29, tzinfo=UTC),
+        )
+
+
 def test_failure_health_backoff_grows() -> None:
     first = _failure_health(
         previous=ProviderHealth(),
@@ -365,3 +415,98 @@ def test_run_cycle_redacts_provider_error_before_publishing_health(
     assert provider_health.last_error is not None
     assert "supersecret" not in provider_health.last_error
     assert "apikey=[redacted]" in provider_health.last_error
+
+
+def test_run_cycle_reuses_fresh_cached_provider_match(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        MATCH_CACHE_TTL_HOURS=24,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    publisher = CapturingPublisher(settings)
+    provider = CacheAwareProvider()
+    service = TrackerService(context, publisher=publisher, providers=[provider])
+    state = TrackerState(
+        provider_matches={
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="cache-824540",
+                matched_at=datetime(2026, 3, 29, 10, 0, tzinfo=UTC),
+            )
+        }
+    )
+
+    updated_state = service._run_cycle(
+        state=state,
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    assert provider.received_cached_matches == [
+        {
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="cache-824540",
+                matched_at=datetime(2026, 3, 29, 10, 0, tzinfo=UTC),
+            )
+        }
+    ]
+    assert provider.fetch_match_ids == ["cache-824540"]
+    assert f"{provider.source}:{home_game.game_id}" in updated_state.provider_matches
+
+
+def test_run_cycle_expires_stale_cached_provider_match(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        MATCH_CACHE_TTL_HOURS=1,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    publisher = CapturingPublisher(settings)
+    provider = CacheAwareProvider()
+    service = TrackerService(context, publisher=publisher, providers=[provider])
+    state = TrackerState(
+        provider_matches={
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="stale-cache-824540",
+                matched_at=datetime(2026, 3, 29, 8, 0, tzinfo=UTC),
+            )
+        }
+    )
+
+    updated_state = service._run_cycle(
+        state=state,
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    assert provider.received_cached_matches == [{}]
+    assert provider.fetch_match_ids == [None]
+    assert f"{provider.source}:{home_game.game_id}" not in updated_state.provider_matches

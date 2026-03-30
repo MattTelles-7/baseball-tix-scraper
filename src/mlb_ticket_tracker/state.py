@@ -55,6 +55,10 @@ class StateStore:
         state.provider_matches[key] = match
         return state
 
+    def forget_match(self, state: TrackerState, *, key: str) -> None:
+        """Remove a provider event match from state."""
+        state.provider_matches.pop(key, None)
+
     def remember_provider_health(
         self,
         state: TrackerState,
