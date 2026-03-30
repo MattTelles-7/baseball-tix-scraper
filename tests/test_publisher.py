@@ -35,6 +35,12 @@ def test_build_price_entity_descriptor(
     )
     assert descriptor.state_topic == "mlb_ticket_tracker/games/824540/ticketmaster/state"
     assert descriptor.attributes_topic == "mlb_ticket_tracker/games/824540/ticketmaster/attributes"
+    assert (
+        descriptor.config_payload["default_entity_id"]
+        == "sensor.cincinnati_reds_824540_ticketmaster_lowest_price"
+    )
+    assert descriptor.config_payload["suggested_display_precision"] == 2
+    assert "object_id" not in descriptor.config_payload
 
 
 def test_build_static_sensor_descriptor(
@@ -44,15 +50,29 @@ def test_build_static_sensor_descriptor(
     descriptor = build_static_sensor_descriptor(
         settings=settings_factory(),
         team=reds_team,
-        sensor_key="next_poll",
-        name="Next Poll",
-        state_topic_suffix="service/next_poll",
-        icon="mdi:clock-outline",
-        device_class="timestamp",
+        sensor_key="ticketmaster_health",
+        name="Ticketmaster Provider Health",
+        state_topic_suffix="providers/ticketmaster/health",
+        icon="mdi:heart-pulse",
+        device_class="enum",
+        entity_category="diagnostic",
+        options=["healthy", "backoff", "error", "unconfigured"],
     )
 
-    assert descriptor.unique_id == "mlb_tix_cincinnati_reds_next_poll"
-    assert descriptor.config_payload["device_class"] == "timestamp"
+    assert descriptor.unique_id == "mlb_tix_cincinnati_reds_ticketmaster_health"
+    assert descriptor.config_payload["device_class"] == "enum"
+    assert descriptor.config_payload["entity_category"] == "diagnostic"
+    assert (
+        descriptor.config_payload["default_entity_id"]
+        == "sensor.cincinnati_reds_ticketmaster_health"
+    )
+    assert descriptor.config_payload["options"] == [
+        "healthy",
+        "backoff",
+        "error",
+        "unconfigured",
+    ]
+    assert "object_id" not in descriptor.config_payload
 
 
 def test_publish_price_observation_emits_expected_topics(
@@ -94,9 +114,14 @@ def test_publish_price_observation_emits_expected_topics(
 
     assert descriptor.attributes_topic is not None
     attributes_payload = json.loads(state.published_topics[descriptor.attributes_topic])
+    assert attributes_payload["game_pk"] == 824540
+    assert attributes_payload["game_date"] == "2026-03-28"
+    assert attributes_payload["matchup"] == "Boston Red Sox at Cincinnati Reds"
     assert attributes_payload["opponent"] == "Boston Red Sox"
+    assert attributes_payload["source_display_name"] == "Ticketmaster"
     assert attributes_payload["source_status"] == "supported"
     assert attributes_payload["source_event_id"] == "G5v123"
+    assert "last_checked" not in attributes_payload
 
 
 def test_publish_price_observation_deduplicates_identical_payloads(
