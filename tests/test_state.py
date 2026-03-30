@@ -40,3 +40,37 @@ def test_track_published_topic_change_detection(tmp_path: Path) -> None:
     assert first_change is True
     assert second_change is False
     assert third_change is True
+
+
+def test_state_store_load_returns_empty_state_for_invalid_json(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text("{not-json", encoding="utf-8")
+    store = StateStore(path)
+
+    loaded = store.load()
+
+    assert loaded == TrackerState()
+
+
+def test_register_and_unregister_entity_and_topics(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    state = TrackerState()
+
+    store.register_entity(
+        state,
+        unique_id="mlb_tix_cincinnati_reds_824540_ticketmaster_lowest_price",
+        discovery_topic="homeassistant/sensor/example/config",
+    )
+    store.track_published_topic(
+        state,
+        topic="homeassistant/sensor/example/config",
+        payload='{"name": "Example"}',
+    )
+    store.clear_published_topic(state, topic="homeassistant/sensor/example/config")
+    store.unregister_entity(
+        state,
+        unique_id="mlb_tix_cincinnati_reds_824540_ticketmaster_lowest_price",
+    )
+
+    assert state.published_topics == {}
+    assert state.dynamic_entities == {}

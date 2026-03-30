@@ -381,32 +381,45 @@ class MqttPublisher:
             )
             return
 
-        if state_store.track_published_topic(
-            state,
+        self._publish_if_changed(
             topic=descriptor.discovery_topic,
             payload=config_json,
-        ):
-            self._publish_raw(descriptor.discovery_topic, config_json, retain=True)
-        if state_store.track_published_topic(
-            state,
+            state_store=state_store,
+            state=state,
+        )
+        self._publish_if_changed(
             topic=descriptor.state_topic,
             payload=state_value,
-        ):
-            self._publish_raw(descriptor.state_topic, state_value, retain=True)
+            state_store=state_store,
+            state=state,
+        )
         if descriptor.attributes_topic and attributes_payload is not None:
             attributes_json = json.dumps(attributes_payload, sort_keys=True)
-            if state_store.track_published_topic(
-                state,
+            self._publish_if_changed(
                 topic=descriptor.attributes_topic,
                 payload=attributes_json,
-            ):
-                self._publish_raw(descriptor.attributes_topic, attributes_json, retain=True)
+                state_store=state_store,
+                state=state,
+            )
         if dynamic:
             state_store.register_entity(
                 state,
                 unique_id=descriptor.unique_id,
                 discovery_topic=descriptor.discovery_topic,
             )
+
+    def _publish_if_changed(
+        self,
+        *,
+        topic: str,
+        payload: str,
+        state_store: StateStore,
+        state: TrackerState,
+    ) -> None:
+        if state.published_topics.get(topic) == payload:
+            return
+        self._publish_raw(topic, payload, retain=True)
+        state_store.track_published_topic(state, topic=topic, payload=payload)
 
     def _publish_raw(self, topic: str, payload: str, *, retain: bool) -> None:
         if self._dry_run:

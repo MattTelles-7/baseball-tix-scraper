@@ -14,6 +14,7 @@ from mlb_ticket_tracker.config import Settings
 from mlb_ticket_tracker.models import (
     ProviderHealth,
     RuntimeStatus,
+    ScheduledGame,
     TeamInfo,
     TrackerState,
 )
@@ -21,7 +22,7 @@ from mlb_ticket_tracker.providers.base import Provider
 from mlb_ticket_tracker.providers.seatgeek import SeatGeekProvider
 from mlb_ticket_tracker.providers.ticketmaster import TicketmasterProvider
 from mlb_ticket_tracker.providers.vivid import VividProvider
-from mlb_ticket_tracker.publisher import MqttPublisher
+from mlb_ticket_tracker.publisher import MqttPublisher, build_price_entity_descriptor
 from mlb_ticket_tracker.schedule import MlbScheduleClient
 from mlb_ticket_tracker.state import StateStore
 from mlb_ticket_tracker.teams import resolve_team
@@ -129,6 +130,14 @@ class TrackerService:
             configured = provider.healthcheck()
             health = state.provider_health.get(provider.source, ProviderHealth())
             if _in_backoff(health=health, now=cycle_started):
+                active_unique_ids.update(
+                    _expected_dynamic_entity_ids(
+                        team=self._context.team,
+                        games=games,
+                        source=provider.source,
+                        settings=self._context.settings,
+                    )
+                )
                 self._publisher.publish_provider_health(
                     team=self._context.team,
                     capability=capability,
@@ -153,6 +162,14 @@ class TrackerService:
                 continue
 
             try:
+                active_unique_ids.update(
+                    _expected_dynamic_entity_ids(
+                        team=self._context.team,
+                        games=games,
+                        source=provider.source,
+                        settings=self._context.settings,
+                    )
+                )
                 cached_matches = {
                     key: match
                     for key, match in state.provider_matches.items()
@@ -275,3 +292,22 @@ def _failure_health(*, previous: ProviderHealth, now: datetime, error: str) -> P
         last_error=error,
         backoff_until=now.astimezone(UTC) + timedelta(minutes=backoff_minutes),
     )
+
+
+def _expected_dynamic_entity_ids(
+    *,
+    team: TeamInfo,
+    games: list[ScheduledGame],
+    source: str,
+    settings: Settings,
+) -> set[str]:
+    return {
+        build_price_entity_descriptor(
+            settings=settings,
+            team=team,
+            game=game,
+            source=source,
+            currency=None,
+        ).unique_id
+        for game in games
+    }
