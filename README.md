@@ -190,6 +190,7 @@ Enable MQTT in Home Assistant, point it at the same broker, and keep the discove
 The app creates stable MQTT discovery entities for each `game x source` price sensor, plus provider health and service sensors. Discovery payloads are retained, and stale game entities are removed after they fall outside the post-game grace window.
 
 See `docs/HOME_ASSISTANT.md` for the exact topic names and sample automations.
+See `docs/HANDOFF.md` for the operator handoff, day-2 procedures, and roadmap.
 
 ## Support Matrix
 
