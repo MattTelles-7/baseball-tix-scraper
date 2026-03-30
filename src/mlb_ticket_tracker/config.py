@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
     post_game_grace_minutes: int = Field(default=240, alias="POST_GAME_GRACE_MINUTES")
+    failure_retry_seconds: float = Field(default=30.0, alias="FAILURE_RETRY_SECONDS")
     dry_run: bool = Field(default=False, alias="DRY_RUN")
     verbose_debug: bool = Field(default=False, alias="VERBOSE_DEBUG")
     http_timeout_seconds: float = Field(default=20.0, alias="HTTP_TIMEOUT_SECONDS")
@@ -96,6 +97,15 @@ class Settings(BaseSettings):
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         """Ensure integer configuration values are positive."""
+        if value <= 0:
+            msg = "value must be positive"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("failure_retry_seconds")
+    @classmethod
+    def validate_positive_retry_seconds(cls, value: float) -> float:
+        """Ensure the runtime retry delay is positive."""
         if value <= 0:
             msg = "value must be positive"
             raise ValueError(msg)

@@ -4,6 +4,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from mlb_ticket_tracker.config import Settings
 from mlb_ticket_tracker.models import (
     MatchedEvent,
@@ -199,3 +201,65 @@ def test_run_cycle_preserves_dynamic_entity_during_provider_backoff(
     assert descriptor.unique_id in updated_state.dynamic_entities
     published_topics = {topic: payload for topic, payload, _ in publisher.published_messages}
     assert published_topics["mlb_ticket_tracker/providers/broken/health/state"] == "backoff"
+
+
+def test_run_forever_retries_after_mqtt_connect_failure(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        FAILURE_RETRY_SECONDS=7.5,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    service = TrackerService(context)
+    sleep_calls: list[float] = []
+
+    class StopLoopError(RuntimeError):
+        pass
+
+    class ConnectFailingPublisher:
+        def __init__(self) -> None:
+            self.connect_calls = 0
+            self.close_calls = 0
+
+        def connect(self) -> None:
+            self.connect_calls += 1
+            msg = "mqtt unavailable"
+            raise RuntimeError(msg)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    publisher = ConnectFailingPublisher()
+    service._publisher = publisher  # type: ignore[assignment]
+    service._providers = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        raise StopLoopError
+
+    monkeypatch.setattr("mlb_ticket_tracker.service.time.sleep", fake_sleep)
+
+    with pytest.raises(StopLoopError):
+        service.run_forever()
+
+    state = state_store.load()
+
+    assert publisher.connect_calls == 1
+    assert publisher.close_calls == 1
+    assert sleep_calls == [7.5]
+    assert state.runtime.last_error == "mqtt unavailable"
+    assert state.runtime.last_error_at is not None
+    assert state.runtime.next_poll_at is not None

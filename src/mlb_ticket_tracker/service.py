@@ -65,6 +65,8 @@ def initialize_runtime_state(
         last_completed_poll_at=state.runtime.last_completed_poll_at,
         last_heartbeat_at=now,
         next_poll_at=now + timedelta(minutes=poll_interval_minutes),
+        last_error_at=state.runtime.last_error_at,
+        last_error=state.runtime.last_error,
     )
     updated_state = state_store.update_runtime(state, runtime)
     state_store.save(updated_state)
@@ -90,17 +92,42 @@ class TrackerService:
             poll_interval_minutes=self._context.settings.poll_interval_minutes,
             timezone=self._context.settings.timezone,
         )
-        self._publisher.connect()
+        logger.info(
+            "service_started",
+            team=self._context.team.slug,
+            providers=[provider.source for provider in self._providers],
+            poll_interval_minutes=self._context.settings.poll_interval_minutes,
+            failure_retry_seconds=self._context.settings.failure_retry_seconds,
+            dry_run=self._context.settings.dry_run,
+            data_dir=str(self._context.settings.data_dir),
+        )
         try:
             while True:
                 cycle_started = datetime.now(tz=ZoneInfo(self._context.settings.timezone))
-                state = self._run_cycle(state=state, cycle_started=cycle_started)
-                sleep_seconds = (
-                    self._context.settings.poll_interval_minutes * 60
-                ) + _RANDOM.uniform(
-                    0,
-                    self._context.settings.request_jitter_seconds,
-                )
+                try:
+                    self._publisher.connect()
+                    state = self._run_cycle(state=state, cycle_started=cycle_started)
+                    sleep_seconds = (
+                        self._context.settings.poll_interval_minutes * 60
+                    ) + _RANDOM.uniform(
+                        0,
+                        self._context.settings.request_jitter_seconds,
+                    )
+                    logger.info("service_sleep_scheduled", sleep_seconds=round(sleep_seconds, 3))
+                except Exception as exc:
+                    runtime = _runtime_failure(
+                        previous=state.runtime,
+                        occurred_at=cycle_started,
+                        retry_seconds=self._context.settings.failure_retry_seconds,
+                        error=str(exc),
+                    )
+                    state = self._context.state_store.update_runtime(state, runtime)
+                    self._context.state_store.save(state)
+                    sleep_seconds = self._context.settings.failure_retry_seconds
+                    logger.exception(
+                        "service_iteration_failed",
+                        retry_in_seconds=sleep_seconds,
+                    )
                 time.sleep(sleep_seconds)
         finally:
             self._publisher.close()
@@ -112,9 +139,16 @@ class TrackerService:
             last_heartbeat_at=cycle_started,
             next_poll_at=cycle_started
             + timedelta(minutes=self._context.settings.poll_interval_minutes),
+            last_error_at=state.runtime.last_error_at,
+            last_error=state.runtime.last_error,
         )
         state = self._context.state_store.update_runtime(state, runtime)
         self._context.state_store.save(state)
+        logger.info(
+            "poll_cycle_started",
+            team=self._context.team.slug,
+            providers=[provider.source for provider in self._providers],
+        )
 
         games = self._context.schedule_client.fetch_upcoming_games(
             team=self._context.team,
@@ -130,6 +164,13 @@ class TrackerService:
             configured = provider.healthcheck()
             health = state.provider_health.get(provider.source, ProviderHealth())
             if _in_backoff(health=health, now=cycle_started):
+                logger.warning(
+                    "provider_in_backoff",
+                    source=provider.source,
+                    backoff_until=(
+                        health.backoff_until.isoformat() if health.backoff_until else None
+                    ),
+                )
                 active_unique_ids.update(
                     _expected_dynamic_entity_ids(
                         team=self._context.team,
@@ -150,6 +191,7 @@ class TrackerService:
                 continue
 
             if not configured:
+                logger.warning("provider_unconfigured", source=provider.source)
                 self._publisher.publish_provider_health(
                     team=self._context.team,
                     capability=capability,
@@ -247,6 +289,8 @@ class TrackerService:
             last_completed_poll_at=completed_at,
             last_heartbeat_at=completed_at,
             next_poll_at=runtime.next_poll_at,
+            last_error_at=None,
+            last_error=None,
         )
         state = self._context.state_store.update_runtime(state, runtime)
         self._publisher.publish_service_metrics(
@@ -258,7 +302,12 @@ class TrackerService:
             state=state,
         )
         self._context.state_store.save(state)
-        logger.info("poll_cycle_completed", tracked_games=len(games))
+        logger.info(
+            "poll_cycle_completed",
+            tracked_games=len(games),
+            providers=len(self._providers),
+            next_poll_at=(runtime.next_poll_at.isoformat() if runtime.next_poll_at else None),
+        )
         return state
 
 
@@ -311,3 +360,20 @@ def _expected_dynamic_entity_ids(
         ).unique_id
         for game in games
     }
+
+
+def _runtime_failure(
+    *,
+    previous: RuntimeStatus,
+    occurred_at: datetime,
+    retry_seconds: float,
+    error: str,
+) -> RuntimeStatus:
+    return RuntimeStatus(
+        last_started_poll_at=occurred_at,
+        last_completed_poll_at=previous.last_completed_poll_at,
+        last_heartbeat_at=occurred_at,
+        next_poll_at=occurred_at + timedelta(seconds=retry_seconds),
+        last_error_at=occurred_at.astimezone(UTC),
+        last_error=error,
+    )

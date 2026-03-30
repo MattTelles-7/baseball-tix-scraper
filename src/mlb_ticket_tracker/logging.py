@@ -21,8 +21,10 @@ def configure_logging(level: str) -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_logger_name,
             structlog.processors.add_log_level,
             timestamper,
+            structlog.processors.StackInfoRenderer(),
             structlog.processors.dict_tracebacks,
             structlog.processors.JSONRenderer(),
         ],

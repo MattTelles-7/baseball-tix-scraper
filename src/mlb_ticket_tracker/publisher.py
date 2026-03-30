@@ -132,6 +132,8 @@ class MqttPublisher:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._dry_run = settings.dry_run
+        self._connected = False
+        self._loop_started = False
         self._client: mqtt.Client | None
         if self._dry_run:
             self._client = None
@@ -143,6 +145,7 @@ class MqttPublisher:
             if settings.mqtt_username:
                 client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
             client.enable_logger()
+            client.reconnect_delay_set(min_delay=1, max_delay=30)
             client.will_set(
                 f"{settings.mqtt_topic_prefix}/availability",
                 payload="offline",
@@ -156,32 +159,66 @@ class MqttPublisher:
         if self._dry_run:
             logger.info("mqtt_dry_run_mode")
             return
+        if self._connected:
+            return
         if self._client is None:
             msg = "MQTT client is not configured"
             raise RuntimeError(msg)
-        self._client.connect(
+        logger.info(
+            "mqtt_connecting",
             host=self._settings.mqtt_host,
             port=self._settings.mqtt_port,
-            keepalive=self._settings.mqtt_keepalive,
+            client_id=self._settings.mqtt_client_id,
         )
-        self._client.loop_start()
-        self._publish_raw(
-            f"{self._settings.mqtt_topic_prefix}/availability",
-            "online",
-            retain=True,
-        )
+        try:
+            if self._loop_started:
+                self._client.reconnect()
+            else:
+                self._client.connect(
+                    host=self._settings.mqtt_host,
+                    port=self._settings.mqtt_port,
+                    keepalive=self._settings.mqtt_keepalive,
+                )
+                self._client.loop_start()
+                self._loop_started = True
+            self._connected = True
+            self._publish_raw(
+                f"{self._settings.mqtt_topic_prefix}/availability",
+                "online",
+                retain=True,
+            )
+            logger.info(
+                "mqtt_connected",
+                host=self._settings.mqtt_host,
+                port=self._settings.mqtt_port,
+            )
+        except Exception:
+            self._connected = False
+            logger.exception("mqtt_connect_failed")
+            raise
 
     def close(self) -> None:
         """Disconnect from the MQTT broker."""
         if self._dry_run or self._client is None:
             return
-        self._publish_raw(
-            f"{self._settings.mqtt_topic_prefix}/availability",
-            "offline",
-            retain=True,
-        )
-        self._client.loop_stop()
-        self._client.disconnect()
+        try:
+            if self._connected:
+                self._publish_raw(
+                    f"{self._settings.mqtt_topic_prefix}/availability",
+                    "offline",
+                    retain=True,
+                )
+        except Exception:
+            logger.warning("mqtt_offline_publish_failed")
+        finally:
+            self._connected = False
+            if self._loop_started:
+                self._client.loop_stop()
+                self._loop_started = False
+            try:
+                self._client.disconnect()
+            except Exception:
+                logger.warning("mqtt_disconnect_failed")
 
     def publish_price_observation(
         self,
@@ -428,8 +465,18 @@ class MqttPublisher:
         if self._client is None:
             msg = "MQTT client is not configured"
             raise RuntimeError(msg)
-        message_info = self._client.publish(topic, payload=payload, qos=1, retain=retain)
-        message_info.wait_for_publish()
+        try:
+            message_info = self._client.publish(topic, payload=payload, qos=1, retain=retain)
+            message_info.wait_for_publish()
+        except Exception:
+            self._connected = False
+            logger.exception("mqtt_publish_failed", topic=topic, retain=retain)
+            raise
+        if message_info.rc != mqtt.MQTT_ERR_SUCCESS:
+            self._connected = False
+            msg = f"MQTT publish failed with rc={message_info.rc}"
+            logger.error("mqtt_publish_failed_rc", topic=topic, retain=retain, rc=message_info.rc)
+            raise RuntimeError(msg)
 
 
 def _dt_to_str(value: datetime | None) -> str | None:
