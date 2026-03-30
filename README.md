@@ -41,6 +41,7 @@ Put everything in the root `.env` file.
 | `HOME_GAMES_ONLY` | Track only home games | `true` |
 | `LOOKAHEAD_DAYS` | Look ahead this many days | `60` |
 | `POLL_INTERVAL_MINUTES` | How often to poll | `15` |
+| `MATCH_CACHE_TTL_HOURS` | How long to keep cached provider event matches before re-matching | `24` |
 | `TIMEZONE` | Local timezone for game handling | `America/New_York` |
 | `DATA_DIR` | Host directory for local state when using Docker Compose | `./data` |
 | `POST_GAME_GRACE_MINUTES` | Keep recent games around before cleanup | `240` |
@@ -130,3 +131,8 @@ Run the local checks with:
 - `scripts/update.sh`: rebuild after changes
 - `scripts/logs.sh`: follow container logs
 - `scripts/health.sh`: run the built-in JSON healthcheck
+
+## Maintainability Notes
+
+- The service orchestration is split into schedule fetch, provider execution, publish, and runtime-update helpers so provider work can be tested in isolation.
+- Provider event matches are cached in `state.json`, but they expire after `MATCH_CACHE_TTL_HOURS` so stale fuzzy matches do not live forever.

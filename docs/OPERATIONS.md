@@ -57,6 +57,7 @@ docker compose ps
 - Source failures do not stop the process. Providers back off independently and the service keeps running.
 - MQTT and other service-level failures trigger a short retry loop controlled by `FAILURE_RETRY_SECONDS`.
 - Recent runtime failures are recorded in `state.json` and surfaced by the healthcheck output.
+- Cached provider event matches are re-used for resilience but are expired after `MATCH_CACHE_TTL_HOURS`.
 
 ## Upgrade
 
@@ -105,5 +106,6 @@ The service can recreate discovery payloads and provider matches over time, but 
 - Inspect container logs for provider errors, MQTT connection failures, and rate limiting.
 - If discovery entities are missing, confirm Home Assistant MQTT discovery is enabled and `MQTT_DISCOVERY_PREFIX` matches the broker setup.
 - If prices are not updating, check whether Ticketmaster is returning event matches and whether the provider is in backoff after recent errors.
+- If a provider starts tracking the wrong event, lower `MATCH_CACHE_TTL_HOURS` temporarily or remove the stale entry from `DATA_DIR/state.json` and restart the service.
 - If the container is restarting repeatedly, run `docker compose logs mlb-ticket-tracker` and check for configuration errors or an unreachable MQTT broker.
 - If you need to force a clean rebuild after image changes, run `docker compose down` followed by `./scripts/deploy.sh`.
