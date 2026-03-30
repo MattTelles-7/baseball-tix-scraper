@@ -24,11 +24,17 @@
 - Rationale: it is the best honest public signal available without privileged access.
 - Consequence: docs must state that it is a best-effort price estimate, not guaranteed live listing parity.
 
-## 2026-03-27: SeatGeek And Vivid Stay Scaffolded
+## 2026-03-30: SeatGeek Moves To Partial Official-API Support
 
-- Decision: keep SeatGeek and Vivid disabled by default and explicitly labeled as partial or unsupported.
-- Rationale: the branch should not overstate source support or depend on brittle undocumented behavior.
-- Consequence: future work can add those providers without pretending they are ready today.
+- Decision: move SeatGeek from scaffold-only to partial support through the official Platform API, while keeping it disabled by default.
+- Rationale: the official API exposes event performer roles and `stats.lowest_price`, which is enough for an honest lowest-price signal without browser automation.
+- Consequence: SeatGeek can now be enabled with `SEATGEEK_CLIENT_ID`, but docs must still warn that prices may remain unknown when the public API omits a lowest price and that all-in pricing is not exposed.
+
+## 2026-03-30: Vivid Remains Scaffold-Only
+
+- Decision: keep Vivid disabled by default and explicitly labeled unsupported beyond scaffold hooks.
+- Rationale: the visible official API surface remains broker-oriented and is not a clean buyer-facing fit for this service.
+- Consequence: the repo continues to avoid brittle or evasive Vivid integrations.
 
 ## 2026-03-27: Home Assistant Entity Cleanup After Grace Window
 

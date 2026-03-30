@@ -10,6 +10,7 @@ Target platform is Docker Compose on Debian 13.
 - A writable host directory for `DATA_DIR`
 - A reachable MQTT broker
 - A valid `TICKETMASTER_API_KEY`
+- Optional: a valid `SEATGEEK_CLIENT_ID` if you want SeatGeek enabled
 
 ### First Deploy
 
@@ -19,7 +20,8 @@ Target platform is Docker Compose on Debian 13.
 cp .env.example .env
 ```
 
-2. Edit `.env` and set the Ticketmaster, team, MQTT, timezone, poll interval, and data directory values you want.
+2. Edit `.env` and set the team, MQTT, timezone, poll interval, and data directory values you want.
+   Add `TICKETMASTER_API_KEY` for Ticketmaster and `SEATGEEK_CLIENT_ID` only if you plan to enable SeatGeek.
 3. Validate the config in Docker without contacting Ticketmaster or publishing MQTT:
 
 ```bash
@@ -32,6 +34,7 @@ Expected output:
 - resolved team details
 - `"data_dir_status": "writable"`
 - Ticketmaster enabled and configured
+- SeatGeek enabled and configured if you turned it on
 
 4. Set `DRY_RUN=true` in `.env` for the first service start.
 5. Start or rebuild the service:
@@ -106,7 +109,7 @@ Expected log signal:
 
 If you still have `DRY_RUN=true`, expect `mqtt_dry_run_mode` instead.
 
-4. Verify Ticketmaster polling completes cleanly:
+4. Verify provider polling completes cleanly:
 
 ```bash
 ./scripts/logs.sh
@@ -115,13 +118,13 @@ If you still have `DRY_RUN=true`, expect `mqtt_dry_run_mode` instead.
 Expected log signals:
 
 - `poll_cycle_started`
-- `provider_matches_refreshed` with `source` set to `ticketmaster`
+- `provider_matches_refreshed` with `source` set to each enabled provider
 - `poll_cycle_completed`
 
 Things you should **not** see in a healthy first pass:
 
-- `provider_cycle_failed` for `ticketmaster`
-- `provider_in_backoff` for `ticketmaster`
+- `provider_cycle_failed` for any enabled provider
+- `provider_in_backoff` for any enabled provider
 - `mqtt_connect_failed`
 - `mqtt_publish_failed`
 
@@ -150,6 +153,7 @@ Expected result:
 Expected entities:
 
 - `sensor.<team>_ticketmaster_health`
+- `sensor.<team>_seatgeek_health` if SeatGeek is enabled
 - `sensor.<team>_tracked_home_games`
 - `sensor.<team>_next_poll`
 - `sensor.<team>_last_completed_poll`
@@ -258,11 +262,12 @@ The service can recreate discovery payloads and provider matches over time, but 
 ## Troubleshooting
 
 - Confirm MQTT credentials and broker reachability.
-- Confirm `TICKETMASTER_API_KEY` is valid.
+- Confirm `TICKETMASTER_API_KEY` and `SEATGEEK_CLIENT_ID` are valid for whichever providers are enabled.
 - Run `./scripts/health.sh` and inspect `last_error`, `last_completed_poll_at`, and provider health details.
 - Inspect container logs for provider errors, MQTT connection failures, and rate limiting.
 - If discovery entities are missing, confirm Home Assistant MQTT discovery is enabled and `MQTT_DISCOVERY_PREFIX` matches the broker setup.
-- If prices are not updating, check whether Ticketmaster is returning event matches and whether the provider is in backoff after recent errors.
+- If prices are not updating, check whether the enabled provider is returning event matches and whether it is in backoff after recent errors.
+- If SeatGeek is enabled and the entity still reads `unknown`, inspect the sensor attributes. The provider may have matched the event but SeatGeek may still omit a public `stats.lowest_price`.
 - If a provider starts tracking the wrong event, lower `MATCH_CACHE_TTL_HOURS` temporarily or remove the stale entry from `DATA_DIR/state.json` and restart the service.
 - If the container is restarting repeatedly, run `docker compose logs mlb-ticket-tracker` and check for configuration errors or an unreachable MQTT broker.
 - If you need to force a clean rebuild after image changes, run `docker compose down` followed by `./scripts/deploy.sh`.
@@ -279,9 +284,9 @@ If the first launch does not look right, work through these in order:
    Look for `mqtt_connect_failed` or `mqtt_publish_failed`.
    Re-check `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `MQTT_PASSWORD`, and that Home Assistant points at the same broker.
 
-3. Ticketmaster fails or backs off:
-   Look for `provider_cycle_failed` or `provider_in_backoff` with `source=ticketmaster`.
-   Re-check `TICKETMASTER_API_KEY`, outbound network access, and whether the provider is returning HTTP errors or rate limits.
+3. Ticket provider fails or backs off:
+   Look for `provider_cycle_failed` or `provider_in_backoff` with the provider source.
+   Re-check the provider credentials, outbound network access, and whether the provider is returning HTTP errors or rate limits.
 
 4. Home Assistant does not create entities:
    Confirm MQTT discovery is enabled in Home Assistant and that `MQTT_DISCOVERY_PREFIX` matches on both sides.
@@ -289,5 +294,5 @@ If the first launch does not look right, work through these in order:
 
 5. Provider health entity exists but price sensors do not:
    Check upcoming home games for the configured team.
-   Check logs for Ticketmaster matching issues.
-   Remember that some games may not expose a public `priceRanges.min`, which results in `unknown` state rather than a numeric price.
+   Check logs for provider matching issues.
+   Remember that some games may not expose a public `priceRanges.min` or `stats.lowest_price`, which results in `unknown` state rather than a numeric price.

@@ -12,11 +12,13 @@
 - Single-user deployment on Debian 13.
 - Docker Compose is the primary install path.
 - Ticketmaster public Discovery API is the first working source.
-- SeatGeek and Vivid remain disabled by default in the initial release.
+- SeatGeek official API is now available as a partial provider and remains disabled by default.
+- Vivid remains disabled by default.
 - Home Assistant is already running MQTT or can be pointed at the same broker.
 
 ## Remaining Work
 
 - Run a real broker/server smoke test on Debian 13.
 - Confirm Ticketmaster auth and event matching on live data.
+- Validate SeatGeek partial support with a real client ID on live data.
 - Adjust README if the Debian server reveals any install friction.

@@ -2,17 +2,17 @@
 
 Single-user service for tracking the cheapest current MLB home-game ticket price and publishing it into Home Assistant over MQTT discovery.
 
-It is built for one person, one team, and one Debian 13 server. Ticketmaster Discovery API is the working source in this branch. SeatGeek and Vivid are present as disabled scaffolds only.
+It is built for one person, one team, and one Debian 13 server. Ticketmaster Discovery API is supported, SeatGeek official API is partially supported, and Vivid remains scaffold-only.
 
 ## Quick Start
 
 1. Copy the example env file: `cp .env.example .env`
-2. Edit `.env` with your team, MQTT broker, and Ticketmaster key.
+2. Edit `.env` with your team, MQTT broker, and provider credentials.
 3. Validate the config without contacting Ticketmaster or MQTT: `./scripts/validate.sh`
-4. Set `DRY_RUN=true` in `.env` for the first startup.
+4. Edit `.env` and set `DRY_RUN=true` for the first startup.
 5. Start it with one command: `./scripts/deploy.sh`
 6. Check `./scripts/health.sh` and `./scripts/logs.sh`
-7. Set `DRY_RUN=false` in `.env` and run `./scripts/update.sh`
+7. Edit `.env` and set `DRY_RUN=false`, then run `./scripts/update.sh`
 
 If you change config later, rerun `./scripts/update.sh`. To watch logs, run `./scripts/logs.sh`.
 
@@ -84,7 +84,7 @@ HOME_GAMES_ONLY=true
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `ENABLE_TICKETMASTER` | Enable Ticketmaster polling | `true` |
-| `ENABLE_SEATGEEK` | Enable the SeatGeek scaffold | `false` |
+| `ENABLE_SEATGEEK` | Enable SeatGeek polling | `false` |
 | `ENABLE_VIVID` | Enable the Vivid scaffold | `false` |
 | `ENABLE_EXPERIMENTAL_ADAPTERS` | Allow experimental adapters to load | `false` |
 
@@ -118,6 +118,13 @@ HOME_GAMES_ONLY=true
 ENABLE_TICKETMASTER=true
 ENABLE_SEATGEEK=false
 ENABLE_VIVID=false
+```
+
+If you want SeatGeek too, also set:
+
+```env
+ENABLE_SEATGEEK=true
+SEATGEEK_CLIENT_ID=replace_me
 ```
 
 ## First-Run Checklist
@@ -156,10 +163,9 @@ Expected output:
 - `"data_dir_status": "writable"`
 - `"providers.ticketmaster.enabled": true`
 
-3. Force the first container start into dry-run mode:
+3. Force the first container start into dry-run mode by editing `.env`:
 
 ```bash
-sed -i 's/^DRY_RUN=false$/DRY_RUN=true/' .env
 ./scripts/deploy.sh
 ./scripts/health.sh
 ./scripts/logs.sh
@@ -170,10 +176,9 @@ Expected output:
 - `./scripts/health.sh` returns JSON with `status` changing from `starting` to `ok` after the first poll cycle
 - logs include `service_started`, `poll_cycle_started`, `mqtt_dry_run_mode`, and `dry_run_publish_entity`
 
-4. Turn on real MQTT publishing:
+4. Turn on real MQTT publishing by editing `.env` again:
 
 ```bash
-sed -i 's/^DRY_RUN=true$/DRY_RUN=false/' .env
 ./scripts/update.sh
 ./scripts/health.sh
 ```
@@ -195,7 +200,7 @@ See `docs/HANDOFF.md` for the operator handoff, day-2 procedures, and roadmap.
 ## Support Matrix
 
 - Ticketmaster: supported
-- SeatGeek: scaffold only
+- SeatGeek: partial, disabled by default
 - Vivid Seats: scaffold only, unsupported by default
 
 ## Limitations

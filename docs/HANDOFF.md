@@ -7,15 +7,15 @@
 - MLB schedule lookup through the public MLB stats API
 - Upcoming home-game filtering for one configured MLB team
 - Ticketmaster polling through the public Discovery API
-- Publishing one Home Assistant MQTT discovery price sensor per upcoming home game for Ticketmaster
+- Publishing one Home Assistant MQTT discovery price sensor per upcoming home game for each enabled provider
 - Publishing Home Assistant provider health and service status sensors
 - Lightweight local JSON state in `DATA_DIR/state.json`
 - Docker Compose deployment on a single self-hosted server
 
 ### Partial
 
-- No live partial provider is enabled today
-- SeatGeek is only a scaffold in this release, but it is the most realistic future partial provider
+- SeatGeek through the official Platform API, disabled by default
+- SeatGeek publishes `stats.lowest_price` when the public API exposes it, but some events may still be `unknown`
 
 ### Intentionally Unsupported
 
@@ -33,7 +33,7 @@
 
 This service is a small long-running poller.
 
-It wakes up on a schedule, asks MLB for the upcoming home games for your team, tries to match those games to Ticketmaster events, reads the public minimum ticket price from Ticketmaster, and publishes the result into Home Assistant through MQTT discovery.
+It wakes up on a schedule, asks MLB for the upcoming home games for your team, tries to match those games to ticket-provider events, reads the cheapest public price each provider exposes, and publishes the result into Home Assistant through MQTT discovery.
 
 It keeps only a small local state file so it can remember what it already published, retain provider health history, and avoid rebuilding everything from scratch after every restart. Home Assistant is the real place where history, dashboards, and automations live.
 
@@ -44,7 +44,8 @@ If Ticketmaster fails temporarily, the service does not crash permanently. It re
 1. Check out the release branch or tag you want to run.
 2. Copy `.env.example` to `.env`.
 3. Fill in your real values for:
-   `TEAM_ID`, `TICKETMASTER_API_KEY`, `MQTT_HOST`, `MQTT_PORT`, and broker auth if required.
+   `TEAM_ID`, `MQTT_HOST`, `MQTT_PORT`, and broker auth if required.
+   For providers, fill in `TICKETMASTER_API_KEY` and optionally `SEATGEEK_CLIENT_ID`.
 4. Run `./scripts/validate.sh`.
 5. For the very first launch, set `DRY_RUN=true` in `.env`.
 6. Run `./scripts/deploy.sh`.
@@ -63,7 +64,7 @@ If Ticketmaster fails temporarily, the service does not crash permanently. It re
    `docker compose ps`
    `./scripts/health.sh`
    `./scripts/logs.sh`
-7. Confirm Home Assistant still shows the expected Ticketmaster and service sensors.
+7. Confirm Home Assistant still shows the expected Ticketmaster, SeatGeek if enabled, and service sensors.
 
 ## Rollback Steps
 
@@ -107,7 +108,7 @@ tar -czf mlb-ticket-tracker-backup.tgz .env data/state.json
 
 - Check `./scripts/health.sh` periodically.
 - Check `./scripts/logs.sh` after any config change or restart.
-- Keep an eye on `sensor.<team>_ticketmaster_health` in Home Assistant.
+- Keep an eye on `sensor.<team>_ticketmaster_health` and `sensor.<team>_seatgeek_health` if enabled.
 - Review `.env.example` before upgrades.
 - Keep Docker and the host OS patched.
 - Take a backup before upgrades.
@@ -141,7 +142,8 @@ The first failure events to care about are:
 - team selection variables once Home Assistant has already created entities
 - the Home Assistant entity naming assumptions in the docs
 - `DATA_DIR` without moving `state.json`
-- provider toggles for SeatGeek or Vivid on a production instance
+- `ENABLE_VIVID` on a production instance
+- `ENABLE_SEATGEEK` without also setting `SEATGEEK_CLIENT_ID`
 - `MATCH_CACHE_TTL_HOURS` unless you are fixing an event-matching problem
 - `POLL_INTERVAL_MINUTES` to something aggressively low without a clear reason
 
@@ -154,13 +156,13 @@ Changing those can create new entities, strand old discovery entities, invalidat
 - Day 1:
   verify `sensor.<team>_ticketmaster_health` settles on `healthy`
 - Day 1:
-  confirm at least one upcoming-game Ticketmaster price sensor exists
+  confirm at least one upcoming-game price sensor exists for each enabled provider
 - Day 2:
   confirm `last_completed_poll` keeps advancing
 - Day 2:
   confirm `next_poll` always stays in the future
 - Day 3:
-  inspect logs for repeated Ticketmaster failures or MQTT reconnect issues
+  inspect logs for repeated provider failures or MQTT reconnect issues
 - Day 3:
   confirm a restart with `docker compose restart mlb-ticket-tracker` recovers cleanly
 - Day 5:
@@ -172,7 +174,7 @@ Changing those can create new entities, strand old discovery entities, invalidat
 
 ### Safe Next Steps
 
-- implement real SeatGeek partial support through its official API
+- validate SeatGeek result quality with a live client ID and real MLB events
 - improve docs around team IDs and example Home Assistant packages
 - tighten CI and release/tag workflow
 - add a small operator status summary command if it stays read-only and local
