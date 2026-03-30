@@ -4,6 +4,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from mlb_ticket_tracker.config import Settings
 from mlb_ticket_tracker.models import (
     MatchedEvent,
@@ -79,6 +81,56 @@ class FakeProvider(Provider):
         )
 
 
+class CacheAwareProvider(Provider):
+    source = "cache"
+
+    def __init__(self) -> None:
+        self.received_cached_matches: list[dict[str, MatchedEvent]] = []
+        self.fetch_match_ids: list[str | None] = []
+
+    def capability_report(self) -> ProviderCapability:
+        return ProviderCapability(
+            source=self.source,
+            source_status=SourceStatus.SUPPORTED,
+            auth_required=False,
+            implemented_fields=("price",),
+            limitations=(),
+        )
+
+    def healthcheck(self) -> bool:
+        return True
+
+    def match_events(
+        self,
+        games: list[ScheduledGame],
+        cached_matches: dict[str, MatchedEvent],
+    ) -> dict[str, MatchedEvent]:
+        del games
+        self.received_cached_matches.append(dict(cached_matches))
+        return {}
+
+    def fetch_lowest_price(
+        self,
+        game: ScheduledGame,
+        matched_event: MatchedEvent | None,
+    ) -> PriceObservation:
+        self.fetch_match_ids.append(
+            matched_event.source_event_id if matched_event is not None else None
+        )
+        return PriceObservation(
+            source=self.source,
+            source_status=SourceStatus.SUPPORTED,
+            game_id=game.game_id,
+            game_datetime=game.game_datetime,
+            home_team=game.home_team,
+            away_team=game.away_team,
+            venue=game.venue,
+            currency="USD",
+            cheapest_price=12.0,
+            checked_at=datetime(2026, 3, 29, tzinfo=UTC),
+        )
+
+
 def test_failure_health_backoff_grows() -> None:
     first = _failure_health(
         previous=ProviderHealth(),
@@ -116,12 +168,14 @@ def test_run_cycle_records_provider_failure_and_continues(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     publisher = CapturingPublisher(settings)
     failing_provider = ExplodingProvider(source="broken", fail_on="fetch")
     healthy_provider = StaticProvider(source="steady", price=18.5)
-    service._publisher = publisher
-    service._providers = [failing_provider, healthy_provider]
+    service = TrackerService(
+        context,
+        publisher=publisher,
+        providers=[failing_provider, healthy_provider],
+    )
 
     updated_state = service._run_cycle(
         state=TrackerState(),
@@ -156,11 +210,13 @@ def test_run_cycle_preserves_dynamic_entity_during_provider_backoff(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     publisher = CapturingPublisher(settings)
     provider = StaticProvider(source="broken")
-    service._publisher = publisher
-    service._providers = [provider]
+    service = TrackerService(
+        context,
+        publisher=publisher,
+        providers=[provider],
+    )
 
     descriptor = build_price_entity_descriptor(
         settings=settings,
@@ -199,3 +255,258 @@ def test_run_cycle_preserves_dynamic_entity_during_provider_backoff(
     assert descriptor.unique_id in updated_state.dynamic_entities
     published_topics = {topic: payload for topic, payload, _ in publisher.published_messages}
     assert published_topics["mlb_ticket_tracker/providers/broken/health/state"] == "backoff"
+
+
+def test_run_forever_retries_after_mqtt_connect_failure(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        FAILURE_RETRY_SECONDS=7.5,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    sleep_calls: list[float] = []
+
+    class StopLoopError(RuntimeError):
+        pass
+
+    class ConnectFailingPublisher:
+        def __init__(self) -> None:
+            self.connect_calls = 0
+            self.close_calls = 0
+
+        def connect(self) -> None:
+            self.connect_calls += 1
+            msg = "mqtt auth failed password=hunter2"
+            raise RuntimeError(msg)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+        def publish_price_observation(
+            self,
+            *,
+            team: TeamInfo,
+            game: ScheduledGame,
+            observation: PriceObservation,
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> str:
+            del team, game, observation, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def publish_provider_health(
+            self,
+            *,
+            team: TeamInfo,
+            capability: ProviderCapability,
+            health: ProviderHealth,
+            state_store: StateStore,
+            state: TrackerState,
+            healthy: bool,
+            configured: bool,
+        ) -> None:
+            del team, capability, health, state_store, state, healthy, configured
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def publish_service_metrics(
+            self,
+            *,
+            team: TeamInfo,
+            tracked_games: int,
+            next_poll_at: datetime,
+            last_completed_poll_at: datetime | None,
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> None:
+            del team, tracked_games, next_poll_at, last_completed_poll_at, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def cleanup_stale_dynamic_entities(
+            self,
+            *,
+            active_unique_ids: set[str],
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> None:
+            del active_unique_ids, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+    publisher = ConnectFailingPublisher()
+    service = TrackerService(context, publisher=publisher, providers=[])
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        raise StopLoopError
+
+    monkeypatch.setattr("mlb_ticket_tracker.service.time.sleep", fake_sleep)
+
+    with pytest.raises(StopLoopError):
+        service.run_forever()
+
+    state = state_store.load()
+
+    assert publisher.connect_calls == 1
+    assert publisher.close_calls == 1
+    assert sleep_calls == [7.5]
+    assert state.runtime.last_error == "mqtt auth failed password=[redacted]"
+    assert state.runtime.last_error_at is not None
+    assert state.runtime.next_poll_at is not None
+
+
+def test_run_cycle_redacts_provider_error_before_publishing_health(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    publisher = CapturingPublisher(settings)
+
+    class SecretErrorProvider(StaticProvider):
+        def fetch_lowest_price(
+            self,
+            game: ScheduledGame,
+            matched_event: MatchedEvent | None,
+        ) -> PriceObservation:
+            del game, matched_event
+            msg = (
+                "GET https://app.ticketmaster.com/discovery/v2/events.json"
+                "?apikey=supersecret&keyword=reds failed"
+            )
+            raise RuntimeError(msg)
+
+    provider = SecretErrorProvider(source="ticketmaster")
+    service = TrackerService(context, publisher=publisher, providers=[provider])
+
+    updated_state = service._run_cycle(
+        state=TrackerState(),
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    provider_health = updated_state.provider_health["ticketmaster"]
+    assert provider_health.last_error is not None
+    assert "supersecret" not in provider_health.last_error
+    assert "apikey=[redacted]" in provider_health.last_error
+
+
+def test_run_cycle_reuses_fresh_cached_provider_match(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        MATCH_CACHE_TTL_HOURS=24,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    publisher = CapturingPublisher(settings)
+    provider = CacheAwareProvider()
+    service = TrackerService(context, publisher=publisher, providers=[provider])
+    state = TrackerState(
+        provider_matches={
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="cache-824540",
+                matched_at=datetime(2026, 3, 29, 10, 0, tzinfo=UTC),
+            )
+        }
+    )
+
+    updated_state = service._run_cycle(
+        state=state,
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    assert provider.received_cached_matches == [
+        {
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="cache-824540",
+                matched_at=datetime(2026, 3, 29, 10, 0, tzinfo=UTC),
+            )
+        }
+    ]
+    assert provider.fetch_match_ids == ["cache-824540"]
+    assert f"{provider.source}:{home_game.game_id}" in updated_state.provider_matches
+
+
+def test_run_cycle_expires_stale_cached_provider_match(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+        MATCH_CACHE_TTL_HOURS=1,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    publisher = CapturingPublisher(settings)
+    provider = CacheAwareProvider()
+    service = TrackerService(context, publisher=publisher, providers=[provider])
+    state = TrackerState(
+        provider_matches={
+            f"{provider.source}:{home_game.game_id}": MatchedEvent(
+                source=provider.source,
+                game_id=home_game.game_id,
+                source_event_id="stale-cache-824540",
+                matched_at=datetime(2026, 3, 29, 8, 0, tzinfo=UTC),
+            )
+        }
+    )
+
+    updated_state = service._run_cycle(
+        state=state,
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    assert provider.received_cached_matches == [{}]
+    assert provider.fetch_match_ids == [None]
+    assert f"{provider.source}:{home_game.game_id}" not in updated_state.provider_matches

@@ -6,8 +6,8 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | MLB Schedule | Supported | Public MLB stats API | None | N/A | Lookahead window only | Implemented |
 | Ticketmaster | Supported | Official Discovery API | Public API key | `priceRanges[].min` | Rate limited; matches are best-effort | Implemented |
-| SeatGeek | Partial | Official Platform API | Client ID required | `stats.lowest_price` | Auth required; not validated end-to-end here | Scaffold only |
-| Vivid Seats | Unsupported by default | Broker-oriented API surface | Token depends on broker tooling | No honest public-buyer field yet | No clean buyer-facing path confirmed | Scaffold only |
+| SeatGeek | Scaffold only | Official Platform API | Client ID required | `stats.lowest_price` is documented upstream | Auth required; not implemented end-to-end here | Scaffold only |
+| Vivid Seats | Scaffold only | Broker-oriented API surface | Token depends on broker tooling | No honest public-buyer field yet | No clean buyer-facing path confirmed | Scaffold only |
 
 ## Notes
 
@@ -28,7 +28,7 @@
 - Public API requires authentication.
 - Docs expose `stats.lowest_price`, but not an all-in pricing signal.
 - Current branch only carries a disabled scaffold for this adapter.
-- Do not describe it as working live support.
+- The repo should treat SeatGeek as a future partial-integration candidate, not current live support.
 
 ### Vivid Seats
 

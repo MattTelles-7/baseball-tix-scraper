@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,7 +28,6 @@ class SeatGeekSettings(ProviderSettings):
     """Configuration for the SeatGeek provider."""
 
     client_id: str | None = None
-    client_secret: str | None = None
 
 
 class VividSettings(ProviderSettings):
@@ -52,12 +52,13 @@ class Settings(BaseSettings):
     home_games_only: bool = Field(default=True, alias="HOME_GAMES_ONLY")
     lookahead_days: int = Field(default=60, alias="LOOKAHEAD_DAYS")
     poll_interval_minutes: int = Field(default=15, alias="POLL_INTERVAL_MINUTES")
+    match_cache_ttl_hours: int = Field(default=24, alias="MATCH_CACHE_TTL_HOURS")
     timezone: str = Field(default="America/New_York", alias="TIMEZONE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
     post_game_grace_minutes: int = Field(default=240, alias="POST_GAME_GRACE_MINUTES")
+    failure_retry_seconds: float = Field(default=30.0, alias="FAILURE_RETRY_SECONDS")
     dry_run: bool = Field(default=False, alias="DRY_RUN")
-    verbose_debug: bool = Field(default=False, alias="VERBOSE_DEBUG")
     http_timeout_seconds: float = Field(default=20.0, alias="HTTP_TIMEOUT_SECONDS")
     request_jitter_seconds: float = Field(default=5.0, alias="REQUEST_JITTER_SECONDS")
     mqtt_host: str = Field(alias="MQTT_HOST")
@@ -77,7 +78,6 @@ class Settings(BaseSettings):
     )
     ticketmaster_api_key: str | None = Field(default=None, alias="TICKETMASTER_API_KEY")
     seatgeek_client_id: str | None = Field(default=None, alias="SEATGEEK_CLIENT_ID")
-    seatgeek_client_secret: str | None = Field(default=None, alias="SEATGEEK_CLIENT_SECRET")
     vivid_api_token: str | None = Field(default=None, alias="VIVID_API_TOKEN")
     ticketmaster_rate_limit_delay_seconds: float = Field(
         default=0.5,
@@ -92,10 +92,24 @@ class Settings(BaseSettings):
         alias="VIVID_RATE_LIMIT_DELAY_SECONDS",
     )
 
-    @field_validator("lookahead_days", "poll_interval_minutes", "post_game_grace_minutes")
+    @field_validator(
+        "lookahead_days",
+        "poll_interval_minutes",
+        "post_game_grace_minutes",
+        "match_cache_ttl_hours",
+    )
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         """Ensure integer configuration values are positive."""
+        if value <= 0:
+            msg = "value must be positive"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("failure_retry_seconds")
+    @classmethod
+    def validate_positive_retry_seconds(cls, value: float) -> float:
+        """Ensure the runtime retry delay is positive."""
         if value <= 0:
             msg = "value must be positive"
             raise ValueError(msg)
@@ -122,6 +136,17 @@ class Settings(BaseSettings):
         """Normalize log-level input for logging configuration."""
         return value.upper()
 
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        """Require a valid IANA timezone name."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            msg = f"unknown timezone: {value}"
+            raise ValueError(msg) from exc
+        return value
+
     @property
     def state_path(self) -> Path:
         """Location of the persistent JSON state file."""
@@ -143,7 +168,6 @@ class Settings(BaseSettings):
             enabled=self.enable_seatgeek,
             rate_limit_delay_seconds=self.seatgeek_rate_limit_delay_seconds,
             client_id=self.seatgeek_client_id,
-            client_secret=self.seatgeek_client_secret,
         )
 
     @property

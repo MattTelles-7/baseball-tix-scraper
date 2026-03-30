@@ -35,3 +35,9 @@
 - Decision: remove stale game entities after a post-game grace period.
 - Rationale: keeps Home Assistant tidy while preserving useful history in HA itself.
 - Consequence: entity state history remains in Home Assistant, but old MQTT discovery entities do not accumulate.
+
+## 2026-03-29: Security Posture Is Public-API-Only And Secret-Aware
+
+- Decision: keep the repo limited to official or clearly public API paths, and sanitize credential-bearing errors before they reach logs, health output, MQTT attributes, or `state.json`.
+- Rationale: this service is meant for self-hosting, not anti-bot experimentation, and provider error text can otherwise leak API keys or other secrets into operator-visible surfaces.
+- Consequence: if a future provider requires browser automation, account-session reuse, proxy rotation, CAPTCHA solving, or Cloudflare bypass to work, it should be documented as unsupported instead of implemented.

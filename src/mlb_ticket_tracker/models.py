@@ -107,6 +107,8 @@ class RuntimeStatus(BaseModel):
     last_completed_poll_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     next_poll_at: datetime | None = None
+    last_error_at: datetime | None = None
+    last_error: str | None = None
 
 
 class TrackerState(BaseModel):
