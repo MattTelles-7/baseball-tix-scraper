@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pytest_httpx import HTTPXMock
@@ -90,3 +91,77 @@ def test_ticketmaster_fetch_without_match() -> None:
 
     assert observation.source_status is SourceStatus.UNAVAILABLE
     assert observation.cheapest_price is None
+
+
+def test_ticketmaster_match_events_uses_cached_match(
+    httpx_mock: HTTPXMock,
+    home_game: ScheduledGame,
+    matched_event: MatchedEvent,
+    ticketmaster_settings: TicketmasterSettings,
+) -> None:
+    provider = TicketmasterProvider(settings=ticketmaster_settings, timeout_seconds=5)
+
+    matches = provider.match_events(
+        [home_game],
+        {"ticketmaster:mlb:824540": matched_event},
+    )
+
+    assert matches["ticketmaster:mlb:824540"] == matched_event
+    assert httpx_mock.get_requests() == []
+
+
+def test_ticketmaster_match_events_selects_best_scored_candidate(
+    httpx_mock: HTTPXMock,
+    home_game: ScheduledGame,
+    ticketmaster_settings: TicketmasterSettings,
+    ticketmaster_search_payload_factory: Callable[[list[dict[str, object]]], dict[str, object]],
+    ticketmaster_event_factory: Callable[..., dict[str, object]],
+) -> None:
+    provider = TicketmasterProvider(settings=ticketmaster_settings, timeout_seconds=5)
+    httpx_mock.add_response(
+        json=ticketmaster_search_payload_factory(
+            [
+                ticketmaster_event_factory(
+                    id="partial-match",
+                    name="Red Sox at Reds",
+                    _embedded={"venues": [{"name": "Day Air Ballpark"}]},
+                ),
+                ticketmaster_event_factory(id="best-match"),
+            ]
+        )
+    )
+
+    matches = provider.match_events([home_game], {})
+
+    assert matches["ticketmaster:mlb:824540"].source_event_id == "best-match"
+
+
+def test_ticketmaster_fetch_without_public_minimum_returns_unavailable(
+    httpx_mock: HTTPXMock,
+    home_game: ScheduledGame,
+    matched_event: MatchedEvent,
+    ticketmaster_settings: TicketmasterSettings,
+    ticketmaster_detail_payload_factory: Callable[..., dict[str, object]],
+) -> None:
+    provider = TicketmasterProvider(settings=ticketmaster_settings, timeout_seconds=5)
+    httpx_mock.add_response(
+        json=ticketmaster_detail_payload_factory(
+            priceRanges=[{"type": "standard", "currency": "USD"}],
+        )
+    )
+
+    observation = provider.fetch_lowest_price(home_game, matched_event)
+
+    assert observation.source_status is SourceStatus.UNAVAILABLE
+    assert observation.cheapest_price is None
+    assert observation.currency == "USD"
+    assert observation.notes == "Ticketmaster returned price ranges without a minimum value."
+
+
+def test_ticketmaster_healthcheck_requires_api_key() -> None:
+    provider = TicketmasterProvider(
+        settings=TicketmasterSettings(enabled=True, rate_limit_delay_seconds=0.0, api_key=None),
+        timeout_seconds=5,
+    )
+
+    assert provider.healthcheck() is False

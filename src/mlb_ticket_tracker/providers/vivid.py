@@ -26,13 +26,12 @@ class VividProvider(Provider):
     def capability_report(self) -> ProviderCapability:
         return ProviderCapability(
             source=self.source,
-            source_status=SourceStatus.EXPERIMENTAL,
+            source_status=SourceStatus.UNAVAILABLE,
             auth_required=True,
             implemented_fields=(),
             limitations=(
-                "No clean public buyer-facing API path has been implemented.",
-                "Visible official docs are broker-oriented, "
-                "so this adapter remains unsupported by default.",
+                "Current branch does not implement a clean buyer-facing Vivid integration.",
+                "Visible official docs are broker-oriented, so this source remains scaffold only.",
             ),
         )
 
@@ -55,7 +54,7 @@ class VividProvider(Provider):
         del matched_event
         return PriceObservation(
             source=self.source,
-            source_status=SourceStatus.EXPERIMENTAL,
+            source_status=SourceStatus.UNAVAILABLE,
             game_id=game.game_id,
             game_datetime=game.game_datetime,
             home_team=game.home_team,
