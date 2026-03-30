@@ -44,6 +44,7 @@ Put everything in the root `.env` file.
 | `TIMEZONE` | Local timezone for game handling | `America/New_York` |
 | `DATA_DIR` | Host directory for local state when using Docker Compose | `./data` |
 | `POST_GAME_GRACE_MINUTES` | Keep recent games around before cleanup | `240` |
+| `FAILURE_RETRY_SECONDS` | Retry delay after MQTT or service-level failures | `30` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `DRY_RUN` | Log publishes without sending MQTT messages | `false` |
 
@@ -128,3 +129,4 @@ Run the local checks with:
 - `scripts/deploy.sh`: start/rebuild the service
 - `scripts/update.sh`: rebuild after changes
 - `scripts/logs.sh`: follow container logs
+- `scripts/health.sh`: run the built-in JSON healthcheck
