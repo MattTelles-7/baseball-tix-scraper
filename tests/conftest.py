@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mlb_ticket_tracker.config import Settings, TicketmasterSettings
+from mlb_ticket_tracker.config import SeatGeekSettings, Settings, TicketmasterSettings
 from mlb_ticket_tracker.models import (
     MatchedEvent,
     PriceObservation,
@@ -184,3 +184,66 @@ def ticketmaster_detail_payload_factory() -> Callable[..., dict[str, object]]:
 @pytest.fixture
 def ticketmaster_settings() -> TicketmasterSettings:
     return TicketmasterSettings(enabled=True, rate_limit_delay_seconds=0.0, api_key="key")
+
+
+@pytest.fixture
+def seatgeek_settings() -> SeatGeekSettings:
+    return SeatGeekSettings(enabled=True, rate_limit_delay_seconds=0.0, client_id="client-id")
+
+
+@pytest.fixture
+def seatgeek_event_factory() -> Callable[..., dict[str, object]]:
+    def factory(**overrides: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "id": 987654,
+            "title": "Boston Red Sox at Cincinnati Reds",
+            "short_title": "Red Sox at Reds",
+            "url": (
+                "/red-sox-at-reds-tickets/"
+                "cincinnati-ohio-great-american-ball-park-2026-03-28/sports/987654"
+            ),
+            "datetime_local": "2026-03-28T16:10:00",
+            "datetime_utc": "2026-03-28T20:10:00",
+            "performers": [
+                {
+                    "name": "Cincinnati Reds",
+                    "slug": "cincinnati-reds",
+                    "home_team": True,
+                },
+                {
+                    "name": "Boston Red Sox",
+                    "slug": "boston-red-sox",
+                    "away_team": True,
+                },
+            ],
+            "venue": {
+                "name": "Great American Ball Park",
+                "city": "Cincinnati",
+                "country": "US",
+            },
+            "stats": {
+                "listing_count": 10,
+                "lowest_price": 31,
+                "highest_price": 144,
+            },
+        }
+        payload.update(overrides)
+        return payload
+
+    return factory
+
+
+@pytest.fixture
+def seatgeek_events_payload_factory() -> Callable[[list[dict[str, object]]], dict[str, object]]:
+    def factory(events: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "meta": {
+                "per_page": len(events),
+                "total": len(events),
+                "page": 1,
+                "took": 1,
+            },
+            "events": events,
+        }
+
+    return factory

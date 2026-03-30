@@ -47,9 +47,13 @@ def validate_settings(settings: Settings) -> ValidationReport:
         errors.append("ENABLE_TICKETMASTER=true requires TICKETMASTER_API_KEY.")
 
     if settings.enable_seatgeek:
-        warnings.append("SeatGeek is scaffold only in this release. Keep ENABLE_SEATGEEK=false.")
         if not settings.seatgeek_client_id:
             warnings.append("ENABLE_SEATGEEK=true is set without SEATGEEK_CLIENT_ID.")
+        else:
+            warnings.append(
+                "SeatGeek support is partial. It uses stats.lowest_price and may still "
+                "publish unknown when SeatGeek omits a public lowest price."
+            )
 
     if settings.enable_vivid:
         warnings.append(

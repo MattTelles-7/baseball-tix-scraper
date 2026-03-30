@@ -453,7 +453,12 @@ def _build_providers(settings: Settings) -> list[Provider]:
             )
         )
     if settings.enable_seatgeek:
-        providers.append(SeatGeekProvider(settings.seatgeek))
+        providers.append(
+            SeatGeekProvider(
+                settings=settings.seatgeek,
+                timeout_seconds=settings.http_timeout_seconds,
+            )
+        )
     if settings.enable_vivid and settings.enable_experimental_adapters:
         providers.append(VividProvider(settings.vivid))
     return providers

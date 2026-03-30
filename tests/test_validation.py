@@ -40,12 +40,13 @@ def test_validate_settings_rejects_missing_ticketmaster_key(
     assert "ENABLE_TICKETMASTER=true requires TICKETMASTER_API_KEY." in report.errors
 
 
-def test_validate_settings_warns_for_scaffold_providers(
+def test_validate_settings_warns_for_partial_and_scaffold_providers(
     settings_factory: Callable[..., Settings],
 ) -> None:
     settings = settings_factory(
         TICKETMASTER_API_KEY="ticketmaster-key",
         ENABLE_SEATGEEK=True,
+        SEATGEEK_CLIENT_ID="client-id",
         ENABLE_VIVID=True,
         ENABLE_EXPERIMENTAL_ADAPTERS=False,
     )
@@ -54,7 +55,8 @@ def test_validate_settings_warns_for_scaffold_providers(
 
     assert report.ok is True
     assert (
-        "SeatGeek is scaffold only in this release. Keep ENABLE_SEATGEEK=false." in report.warnings
+        "SeatGeek support is partial. It uses stats.lowest_price and may still "
+        "publish unknown when SeatGeek omits a public lowest price." in report.warnings
     )
     assert (
         "Vivid is scaffold only in this release. Keep ENABLE_VIVID=false for first deployment."
