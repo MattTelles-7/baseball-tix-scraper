@@ -236,7 +236,7 @@ def test_run_forever_retries_after_mqtt_connect_failure(
 
         def connect(self) -> None:
             self.connect_calls += 1
-            msg = "mqtt unavailable"
+            msg = "mqtt auth failed password=hunter2"
             raise RuntimeError(msg)
 
         def close(self) -> None:
@@ -260,6 +260,55 @@ def test_run_forever_retries_after_mqtt_connect_failure(
     assert publisher.connect_calls == 1
     assert publisher.close_calls == 1
     assert sleep_calls == [7.5]
-    assert state.runtime.last_error == "mqtt unavailable"
+    assert state.runtime.last_error == "mqtt auth failed password=[redacted]"
     assert state.runtime.last_error_at is not None
     assert state.runtime.next_poll_at is not None
+
+
+def test_run_cycle_redacts_provider_error_before_publishing_health(
+    settings_factory: Callable[..., Settings],
+    reds_team: TeamInfo,
+    home_game: ScheduledGame,
+    tmp_path: Path,
+) -> None:
+    settings = settings_factory(
+        ENABLE_TICKETMASTER=False,
+        ENABLE_SEATGEEK=False,
+        ENABLE_VIVID=False,
+    )
+    state_store = StateStore(tmp_path / "state.json")
+    context = ServiceContext(
+        settings=settings,
+        team=reds_team,
+        state_store=state_store,
+        schedule_client=FakeScheduleClient([home_game]),
+    )
+    service = TrackerService(context)
+    publisher = CapturingPublisher(settings)
+
+    class SecretErrorProvider(StaticProvider):
+        def fetch_lowest_price(
+            self,
+            game: ScheduledGame,
+            matched_event: MatchedEvent | None,
+        ) -> PriceObservation:
+            del game, matched_event
+            msg = (
+                "GET https://app.ticketmaster.com/discovery/v2/events.json"
+                "?apikey=supersecret&keyword=reds failed"
+            )
+            raise RuntimeError(msg)
+
+    provider = SecretErrorProvider(source="ticketmaster")
+    service._publisher = publisher
+    service._providers = [provider]
+
+    updated_state = service._run_cycle(
+        state=TrackerState(),
+        cycle_started=datetime(2026, 3, 29, 12, 0, tzinfo=UTC),
+    )
+
+    provider_health = updated_state.provider_health["ticketmaster"]
+    assert provider_health.last_error is not None
+    assert "supersecret" not in provider_health.last_error
+    assert "apikey=[redacted]" in provider_health.last_error

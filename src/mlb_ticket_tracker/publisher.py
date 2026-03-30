@@ -21,7 +21,7 @@ from mlb_ticket_tracker.models import (
     TrackerState,
 )
 from mlb_ticket_tracker.state import StateStore
-from mlb_ticket_tracker.utils import slugify
+from mlb_ticket_tracker.utils import redact_sensitive_text, slugify
 
 logger = structlog.get_logger(__name__)
 
@@ -202,7 +202,7 @@ class MqttPublisher:
             )
         except Exception:
             self._connected = False
-            logger.exception("mqtt_connect_failed")
+            logger.error("mqtt_connect_failed")
             raise
 
     def close(self) -> None:
@@ -321,7 +321,9 @@ class MqttPublisher:
             "consecutive_failures": health.consecutive_failures,
             "last_successful_poll_at": _dt_to_str(health.last_successful_poll_at),
             "last_error_at": _dt_to_str(health.last_error_at),
-            "last_error": health.last_error,
+            "last_error": (
+                redact_sensitive_text(health.last_error) if health.last_error is not None else None
+            ),
             "backoff_until": _dt_to_str(health.backoff_until),
         }
         self._publish_entity(
@@ -486,9 +488,15 @@ class MqttPublisher:
         try:
             message_info = self._client.publish(topic, payload=payload, qos=1, retain=retain)
             message_info.wait_for_publish()
-        except Exception:
+        except Exception as exc:
             self._connected = False
-            logger.exception("mqtt_publish_failed", topic=topic, retain=retain)
+            logger.error(
+                "mqtt_publish_failed",
+                topic=topic,
+                retain=retain,
+                error=redact_sensitive_text(str(exc)),
+                error_type=type(exc).__name__,
+            )
             raise
         if message_info.rc != mqtt.MQTT_ERR_SUCCESS:
             self._connected = False

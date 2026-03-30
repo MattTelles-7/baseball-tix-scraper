@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from mlb_ticket_tracker.config import Settings
 from mlb_ticket_tracker.models import ProviderHealth, TrackerState
+from mlb_ticket_tracker.utils import redact_sensitive_text
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,11 @@ def evaluate_health(
         "last_heartbeat_at": _dt_to_str(heartbeat),
         "next_poll_at": _dt_to_str(state.runtime.next_poll_at),
         "last_error_at": _dt_to_str(state.runtime.last_error_at),
-        "last_error": state.runtime.last_error,
+        "last_error": (
+            redact_sensitive_text(state.runtime.last_error)
+            if state.runtime.last_error is not None
+            else None
+        ),
         "provider_health": {
             source: _provider_health_details(health)
             for source, health in state.provider_health.items()
@@ -84,7 +89,9 @@ def _provider_health_details(health: ProviderHealth) -> dict[str, object]:
         "consecutive_failures": health.consecutive_failures,
         "last_successful_poll_at": _dt_to_str(health.last_successful_poll_at),
         "last_error_at": _dt_to_str(health.last_error_at),
-        "last_error": health.last_error,
+        "last_error": (
+            redact_sensitive_text(health.last_error) if health.last_error is not None else None
+        ),
         "backoff_until": _dt_to_str(health.backoff_until),
     }
 

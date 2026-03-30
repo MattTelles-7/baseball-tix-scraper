@@ -45,8 +45,10 @@ Current branch state: the service already has the core schedule, state, Ticketma
 
 - Do not add SQL as a v1 dependency.
 - Do not add anti-bot evasion, CAPTCHA handling, proxy rotation, or Cloudflare bypass behavior.
+- Do not add browser automation, login automation, or account-session reuse for ticket sources unless the repo docs and decisions are explicitly updated first.
 - Do not overstate source support in docs.
 - Do not silently change public config names or MQTT entity identity rules.
+- Do not log or persist raw credential-bearing error strings; redact API keys, tokens, passwords, and secrets before writing logs, MQTT attributes, health output, or `state.json`.
 
 ## Done Criteria
 
@@ -69,3 +71,5 @@ Current branch state: the service already has the core schedule, state, Ticketma
 - Prefer official schedule and ticket APIs.
 - If a provider is partial or unsupported, represent it honestly in code and docs.
 - Never add instructions or code intended to bypass provider protections.
+- If a provider would require anti-bot work, a browser session, or customer-account automation to function, stop and document it as unsupported instead of implementing a workaround.
+- Treat `state.json`, healthcheck output, and provider health attributes as operator-visible surfaces and keep them free of secrets.

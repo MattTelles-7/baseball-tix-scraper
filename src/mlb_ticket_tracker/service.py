@@ -26,6 +26,7 @@ from mlb_ticket_tracker.publisher import MqttPublisher, build_price_entity_descr
 from mlb_ticket_tracker.schedule import MlbScheduleClient
 from mlb_ticket_tracker.state import StateStore
 from mlb_ticket_tracker.teams import resolve_team
+from mlb_ticket_tracker.utils import redact_sensitive_text
 
 logger = structlog.get_logger(__name__)
 _RANDOM = SystemRandom()
@@ -119,14 +120,16 @@ class TrackerService:
                         previous=state.runtime,
                         occurred_at=cycle_started,
                         retry_seconds=self._context.settings.failure_retry_seconds,
-                        error=str(exc),
+                        error=redact_sensitive_text(str(exc)),
                     )
                     state = self._context.state_store.update_runtime(state, runtime)
                     self._context.state_store.save(state)
                     sleep_seconds = self._context.settings.failure_retry_seconds
-                    logger.exception(
+                    logger.error(
                         "service_iteration_failed",
                         retry_in_seconds=sleep_seconds,
+                        error=redact_sensitive_text(str(exc)),
+                        error_type=type(exc).__name__,
                     )
                 time.sleep(sleep_seconds)
         finally:
@@ -260,7 +263,8 @@ class TrackerService:
                     configured=True,
                 )
             except Exception as exc:
-                health = _failure_health(previous=health, now=cycle_started, error=str(exc))
+                safe_error = redact_sensitive_text(str(exc))
+                health = _failure_health(previous=health, now=cycle_started, error=safe_error)
                 self._context.state_store.remember_provider_health(
                     state,
                     source=provider.source,
@@ -275,7 +279,12 @@ class TrackerService:
                     healthy=False,
                     configured=True,
                 )
-                logger.exception("provider_cycle_failed", source=provider.source)
+                logger.error(
+                    "provider_cycle_failed",
+                    source=provider.source,
+                    error=safe_error,
+                    error_type=type(exc).__name__,
+                )
 
         self._publisher.cleanup_stale_dynamic_entities(
             active_unique_ids=active_unique_ids,

@@ -53,7 +53,7 @@ def test_evaluate_health_fails_with_stale_heartbeat_and_reports_error(
         runtime=RuntimeStatus(
             last_heartbeat_at=datetime(2026, 3, 29, 11, 0, tzinfo=UTC),
             last_error_at=datetime(2026, 3, 29, 11, 5, tzinfo=UTC),
-            last_error="mqtt down",
+            last_error="mqtt down password=hunter2",
         ),
     )
 
@@ -65,5 +65,5 @@ def test_evaluate_health_fails_with_stale_heartbeat_and_reports_error(
 
     assert report.ok is False
     assert report.status == "stale"
-    assert report.details["last_error"] == "mqtt down"
+    assert report.details["last_error"] == "mqtt down password=[redacted]"
     assert report.details["heartbeat_age_seconds"] == 3600.0

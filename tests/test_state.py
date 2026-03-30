@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from stat import S_IMODE
 
 from mlb_ticket_tracker.models import MatchedEvent, ProviderHealth, RuntimeStatus, TrackerState
 from mlb_ticket_tracker.state import StateStore
@@ -27,6 +28,7 @@ def test_state_store_round_trip(tmp_path: Path) -> None:
     assert loaded.provider_matches["ticketmaster:mlb:824540"].source_event_id == "G5d"
     assert loaded.provider_health["ticketmaster"].consecutive_failures == 1
     assert loaded.runtime.last_heartbeat_at == datetime(2026, 3, 27, tzinfo=UTC)
+    assert S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_track_published_topic_change_detection(tmp_path: Path) -> None:

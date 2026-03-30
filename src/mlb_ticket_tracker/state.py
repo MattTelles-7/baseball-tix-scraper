@@ -45,6 +45,10 @@ class StateStore:
             tmp_path = Path(tmp_file.name)
 
         tmp_path.replace(self._path)
+        try:
+            self._path.chmod(0o600)
+        except OSError:
+            pass
 
     def remember_match(self, state: TrackerState, *, key: str, match: MatchedEvent) -> TrackerState:
         """Store a provider event match."""
