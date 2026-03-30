@@ -118,12 +118,14 @@ def test_run_cycle_records_provider_failure_and_continues(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     publisher = CapturingPublisher(settings)
     failing_provider = ExplodingProvider(source="broken", fail_on="fetch")
     healthy_provider = StaticProvider(source="steady", price=18.5)
-    service._publisher = publisher
-    service._providers = [failing_provider, healthy_provider]
+    service = TrackerService(
+        context,
+        publisher=publisher,
+        providers=[failing_provider, healthy_provider],
+    )
 
     updated_state = service._run_cycle(
         state=TrackerState(),
@@ -158,11 +160,13 @@ def test_run_cycle_preserves_dynamic_entity_during_provider_backoff(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     publisher = CapturingPublisher(settings)
     provider = StaticProvider(source="broken")
-    service._publisher = publisher
-    service._providers = [provider]
+    service = TrackerService(
+        context,
+        publisher=publisher,
+        providers=[provider],
+    )
 
     descriptor = build_price_entity_descriptor(
         settings=settings,
@@ -223,7 +227,6 @@ def test_run_forever_retries_after_mqtt_connect_failure(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     sleep_calls: list[float] = []
 
     class StopLoopError(RuntimeError):
@@ -242,9 +245,61 @@ def test_run_forever_retries_after_mqtt_connect_failure(
         def close(self) -> None:
             self.close_calls += 1
 
+        def publish_price_observation(
+            self,
+            *,
+            team: TeamInfo,
+            game: ScheduledGame,
+            observation: PriceObservation,
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> str:
+            del team, game, observation, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def publish_provider_health(
+            self,
+            *,
+            team: TeamInfo,
+            capability: ProviderCapability,
+            health: ProviderHealth,
+            state_store: StateStore,
+            state: TrackerState,
+            healthy: bool,
+            configured: bool,
+        ) -> None:
+            del team, capability, health, state_store, state, healthy, configured
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def publish_service_metrics(
+            self,
+            *,
+            team: TeamInfo,
+            tracked_games: int,
+            next_poll_at: datetime,
+            last_completed_poll_at: datetime | None,
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> None:
+            del team, tracked_games, next_poll_at, last_completed_poll_at, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
+        def cleanup_stale_dynamic_entities(
+            self,
+            *,
+            active_unique_ids: set[str],
+            state_store: StateStore,
+            state: TrackerState,
+        ) -> None:
+            del active_unique_ids, state_store, state
+            msg = "not used in this test"
+            raise RuntimeError(msg)
+
     publisher = ConnectFailingPublisher()
-    service._publisher = publisher  # type: ignore[assignment]
-    service._providers = []
+    service = TrackerService(context, publisher=publisher, providers=[])
 
     def fake_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
@@ -283,7 +338,6 @@ def test_run_cycle_redacts_provider_error_before_publishing_health(
         state_store=state_store,
         schedule_client=FakeScheduleClient([home_game]),
     )
-    service = TrackerService(context)
     publisher = CapturingPublisher(settings)
 
     class SecretErrorProvider(StaticProvider):
@@ -300,8 +354,7 @@ def test_run_cycle_redacts_provider_error_before_publishing_health(
             raise RuntimeError(msg)
 
     provider = SecretErrorProvider(source="ticketmaster")
-    service._publisher = publisher
-    service._providers = [provider]
+    service = TrackerService(context, publisher=publisher, providers=[provider])
 
     updated_state = service._run_cycle(
         state=TrackerState(),

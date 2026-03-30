@@ -18,6 +18,7 @@ from mlb_ticket_tracker.models import (
     TeamInfo,
     TrackerState,
 )
+from mlb_ticket_tracker.ports import PublisherPort, ScheduleClientPort
 from mlb_ticket_tracker.providers.base import Provider
 from mlb_ticket_tracker.providers.seatgeek import SeatGeekProvider
 from mlb_ticket_tracker.providers.ticketmaster import TicketmasterProvider
@@ -39,7 +40,7 @@ class ServiceContext:
     settings: Settings
     team: TeamInfo
     state_store: StateStore
-    schedule_client: MlbScheduleClient
+    schedule_client: ScheduleClientPort
 
 
 def build_service_context(settings: Settings) -> ServiceContext:
@@ -79,10 +80,16 @@ def initialize_runtime_state(
 class TrackerService:
     """Long-running service that polls ticket providers and publishes MQTT updates."""
 
-    def __init__(self, context: ServiceContext) -> None:
+    def __init__(
+        self,
+        context: ServiceContext,
+        *,
+        publisher: PublisherPort | None = None,
+        providers: list[Provider] | None = None,
+    ) -> None:
         self._context = context
-        self._publisher = MqttPublisher(context.settings)
-        self._providers = _build_providers(context.settings)
+        self._publisher = publisher or MqttPublisher(context.settings)
+        self._providers = providers or _build_providers(context.settings)
 
     def run_forever(self) -> None:
         """Run the polling loop until interrupted."""
